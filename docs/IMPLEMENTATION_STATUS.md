@@ -1,6 +1,6 @@
 # MatchPoint Implementation Status
 
-Current as of 2026-06-28.
+Current as of 2026-07-01.
 
 ## Module Status
 
@@ -10,8 +10,8 @@ Current as of 2026-06-28.
 | `ringbuffer` | Delivered | `CHECKER: WARN` | Allocation, race, CPU, and contract audits passed. Warnings remain for staticcheck package matching and partial direct coverage of some multi-clause behaviours. |
 | `redisqueue` | Delivered | `CHECKER: WARN` | Allocation, race, vet, staticcheck, and contract audits passed. Warnings remain for CPU profile tooling/top frames, benchmark `GOMAXPROCS` hygiene, and partial multi-clause coverage. |
 | `matchcore` | Delivered | `CHECKER: WARN` | Allocation, race, vet, staticcheck, and contract audits passed. Warning remains for CPU profile tooling/top frames. |
-| `eomm` | Not started | N/A | Next module in delivery sequence. |
-| `vectorarch` | Not started | N/A | Blocked on `eomm`. |
+| `eomm` | Delivered | `CHECKER: WARN` | Allocation, race, vet, staticcheck, and contract audits passed. Warning remains for CPU profile tooling. |
+| `vectorarch` | Not started | N/A | Next module in delivery sequence. |
 | `simulation` | Not started | N/A | Blocked on `vectorarch`. |
 | `telemetry` | Not started | N/A | Blocked on `simulation`. |
 
@@ -52,6 +52,15 @@ Current as of 2026-06-28.
 - Tests and benchmarks: `internal/matchcore/matchcore_test.go`
 - Module README: `internal/matchcore/README.md`
 - Checker report: `reports/matchcore_checker_report.md`
+
+### `eomm`
+
+- Planner contract: `contracts/eomm_contract.go`
+- Planner spec: `contracts/eomm_spec.md`
+- Implementation: `internal/eomm/eomm.go`
+- Tests and benchmarks: `internal/eomm/eomm_test.go`
+- Module README: `internal/eomm/README.md`
+- Checker report: `reports/eomm_checker_report.md`
 
 ## Known Tooling Warning
 
