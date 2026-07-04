@@ -4,10 +4,12 @@ package telemetry
 import (
 	"bufio"
 	"crypto/sha1"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -20,6 +22,9 @@ import (
 )
 
 var errWebSocketPayloadTooLarge = errors.New("telemetry: websocket payload too large")
+
+//go:embed web/dist
+var visualizerAssets embed.FS
 
 const (
 	DefaultRingCapacity uint64 = 65_536
@@ -319,8 +324,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveWebSocket(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, VisualizerHTML)
+	s.serveVisualizer(w, r)
 }
 
 func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +363,25 @@ func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) serveVisualizer(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/" {
+		data, err := visualizerAssets.ReadFile("web/dist/index.html")
+		if err != nil {
+			http.Error(w, "visualizer index unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(data)
+		return
+	}
+	sub, err := fs.Sub(visualizerAssets, "web/dist")
+	if err != nil {
+		http.Error(w, "visualizer assets unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
 }
 
 func (s *Server) writeWebSocketFrame(w io.Writer, conn net.Conn) Status {
@@ -447,49 +470,3 @@ func (s *Sink) write(event Event) {
 		_ = s.ring.Write(event)
 	}
 }
-
-const VisualizerHTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MatchPoint Telemetry</title>
-<style>
-:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#172033;background:#f5f7fb}
-body{margin:0}
-main{max-width:1120px;margin:0 auto;padding:28px}
-header{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:24px}
-h1{font-size:30px;margin:0}
-.status{font-size:13px;color:#526071}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
-.panel{background:white;border:1px solid #dbe2ee;border-radius:8px;padding:16px}
-.label{font-size:12px;color:#66758a;text-transform:uppercase}
-.value{font-size:28px;font-weight:700;margin-top:6px}
-.bars{display:grid;gap:10px}
-.bar{height:28px;background:#e8edf6;border-radius:6px;overflow:hidden;position:relative}
-.fill{height:100%;background:#1f8a70;width:0}
-.bar span{position:absolute;inset:0;display:flex;align-items:center;padding-left:10px;font-size:13px}
-@media (max-width:800px){.grid{grid-template-columns:1fr 1fr}header{display:block}}
-</style>
-</head>
-<body>
-<main>
-<header><div><h1>MatchPoint Telemetry</h1><div class="status" id="status">connecting</div></div></header>
-<section class="grid">
-<div class="panel"><div class="label">Matches Last Tick</div><div class="value" id="matches">0</div></div>
-<div class="panel"><div class="label">EOMM Accuracy</div><div class="value" id="accuracy">0.00</div></div>
-<div class="panel"><div class="label">Heap MB</div><div class="value" id="heap">0.0</div></div>
-<div class="panel"><div class="label">Churn Alerts</div><div class="value" id="churn">0</div></div>
-</section>
-<section class="panel"><div class="label">Queue Depths</div><div class="bars" id="bars"></div></section>
-</main>
-<script>
-const bars=document.getElementById('bars');
-for(let i=0;i<5;i++){const b=document.createElement('div');b.className='bar';b.innerHTML='<div class="fill"></div><span>Segment '+i+': 0</span>';bars.appendChild(b)}
-const ws=new WebSocket('ws://'+location.host+'/telemetry');
-ws.onopen=()=>status.textContent='connected';
-ws.onclose=()=>status.textContent='disconnected';
-ws.onmessage=e=>{const f=JSON.parse(e.data);matches.textContent=f.matchesLastTick;accuracy.textContent=Number(f.eommAccuracy).toFixed(2);heap.textContent=(f.allocBytesHeap/1048576).toFixed(1);churn.textContent=f.churnAlerts;const max=Math.max(1,...f.queueDepths);[...bars.children].forEach((b,i)=>{b.children[0].style.width=(f.queueDepths[i]/max*100)+'%';b.children[1].textContent='Segment '+i+': '+f.queueDepths[i]})};
-</script>
-</body>
-</html>`

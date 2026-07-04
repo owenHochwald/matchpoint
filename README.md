@@ -62,7 +62,8 @@ handoff state, and `docs/FEATURES.md` for the authoritative system checklist.
 - Archetype vector classification for structural counters and stylistic mirrors.
 - Simulation of player tilt, churn, trophy floors, deck mutation, and session
   exits.
-- Async telemetry ring buffers with a lightweight WebSocket visualizer.
+- Async telemetry ring buffers with a React, TypeScript, and Tailwind
+  WebSocket visualizer.
 
 ## Why It Is Interesting
 

@@ -528,8 +528,9 @@ JSON. Frame rate: 10Hz (100ms emit interval). Each frame is a JSON object:
 
 ### 8.4 Visualizer Frontend Contract
 
-The frontend is a single-page HTML/JS application (no build step). It connects
-via WebSocket to the Go server at `ws://localhost:8080/telemetry`. It renders:
+The frontend is a lightweight React + TypeScript + Tailwind application built to
+static assets embedded by the Go telemetry server. It connects via WebSocket to
+the Go server at `ws://localhost:8080/telemetry`. It renders:
 
 - Real-time bar chart of queue depths per segment.
 - Rolling line chart of match rate (matches/tick).
