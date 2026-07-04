@@ -3,6 +3,8 @@ package vectorarch
 
 import (
 	"math"
+	"os"
+	"strconv"
 
 	"matchpoint/contracts"
 )
@@ -38,11 +40,20 @@ type engine struct {
 }
 
 func productionConfig() contracts.VectorConfig {
-	return contracts.VectorConfig{
+	config := contracts.VectorConfig{
 		ZeroThreshold:    contracts.VectorZeroThreshold,
 		CounterThreshold: contracts.VectorCounterThreshold,
 		SimilarThreshold: contracts.VectorSimilarThreshold,
 	}
+	if threshold, ok := envFloat32("MP_COUNTER_THRESHOLD"); ok {
+		config.CounterThreshold = threshold
+	}
+	return config
+}
+
+// NewEngine creates an archetype vector engine with defaults applied.
+func NewEngine(config contracts.VectorConfig) (contracts.ArchetypeVectorEngine, contracts.VectorStatus) {
+	return newEngine(config)
 }
 
 func newEngine(config contracts.VectorConfig) (*engine, contracts.VectorStatus) {
@@ -54,14 +65,15 @@ func newEngine(config contracts.VectorConfig) (*engine, contracts.VectorStatus) 
 }
 
 func fillDefaults(config contracts.VectorConfig) contracts.VectorConfig {
+	defaults := productionConfig()
 	if config.ZeroThreshold == 0 {
-		config.ZeroThreshold = contracts.VectorZeroThreshold
+		config.ZeroThreshold = defaults.ZeroThreshold
 	}
 	if config.CounterThreshold == 0 {
-		config.CounterThreshold = contracts.VectorCounterThreshold
+		config.CounterThreshold = defaults.CounterThreshold
 	}
 	if config.SimilarThreshold == 0 {
-		config.SimilarThreshold = contracts.VectorSimilarThreshold
+		config.SimilarThreshold = defaults.SimilarThreshold
 	}
 	return config
 }
@@ -137,6 +149,18 @@ func finiteVector(v [8]float32) bool {
 
 func finite(v float32) bool {
 	return !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0)
+}
+
+func envFloat32(key string) (float32, bool) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(raw, 32)
+	if err != nil {
+		return 0, false
+	}
+	return float32(value), true
 }
 
 func clamp(v float32, min float32, max float32) float32 {

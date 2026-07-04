@@ -9,6 +9,8 @@ import (
 )
 
 func TestVectorEngineConfigDefaultsAndValidation(t *testing.T) {
+	t.Setenv("MP_COUNTER_THRESHOLD", "")
+
 	// B-VECTORARCH-1
 	eng, status := newEngine(contracts.VectorConfig{})
 	if status != contracts.VectorStatusOK {
@@ -23,6 +25,32 @@ func TestVectorEngineConfigDefaultsAndValidation(t *testing.T) {
 	// B-VECTORARCH-2
 	if _, status := newEngine(contracts.VectorConfig{ZeroThreshold: -1, CounterThreshold: 0.8, SimilarThreshold: 0.2}); status != contracts.VectorStatusInvalidConfig {
 		t.Fatalf("invalid config status = %v", status)
+	}
+}
+
+func TestNewEngineExposesContractEngine(t *testing.T) {
+	t.Setenv("MP_COUNTER_THRESHOLD", "")
+
+	eng, status := NewEngine(contracts.VectorConfig{})
+	if status != contracts.VectorStatusOK {
+		t.Fatalf("NewEngine status = %v", status)
+	}
+	var out contracts.VectorAnalysis
+	if status := eng.AnalyzePair([8]float32{1}, [8]float32{1}, &out); status != contracts.VectorStatusOK {
+		t.Fatalf("AnalyzePair status = %v", status)
+	}
+}
+
+func TestCounterThresholdEnvironmentOverride(t *testing.T) {
+	t.Setenv("MP_COUNTER_THRESHOLD", "0.6")
+
+	eng, status := newEngine(contracts.VectorConfig{})
+	if status != contracts.VectorStatusOK {
+		t.Fatalf("newEngine status = %v", status)
+	}
+	var out contracts.VectorAnalysis
+	if status := eng.AnalyzePair([8]float32{1}, [8]float32{0.5, 0.5}, &out); status != contracts.VectorStatusOK || out.Class != contracts.VectorPairCounter {
+		t.Fatalf("env threshold status=%v out=%+v", status, out)
 	}
 }
 
