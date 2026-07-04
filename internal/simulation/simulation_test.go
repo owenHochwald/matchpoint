@@ -19,6 +19,8 @@ func (m *dropMetrics) RecordSimDrop(playerID uint64) {
 }
 
 func TestSimulationConfigDefaultsAndValidation(t *testing.T) {
+	clearSimEnv(t)
+
 	// B-SIMULATION-1
 	eng, status := newEngine(contracts.SimConfig{})
 	if status != contracts.SimStatusOK {
@@ -34,6 +36,42 @@ func TestSimulationConfigDefaultsAndValidation(t *testing.T) {
 	// B-SIMULATION-2
 	if _, status := newEngine(contracts.SimConfig{ConcurrentPlayers: 1, DurationNanos: -1, MatchMeanNanos: 1, MaxSessionLosses: 1, TickRateNanos: 1}); status != contracts.SimStatusInvalidConfig {
 		t.Fatalf("invalid status = %v", status)
+	}
+}
+
+func TestNewEngineExposesContractEngine(t *testing.T) {
+	clearSimEnv(t)
+
+	eng, status := NewEngine(contracts.SimConfig{})
+	if status != contracts.SimStatusOK {
+		t.Fatalf("NewEngine status = %v", status)
+	}
+	var out contracts.SimConvergenceResult
+	if status := eng.CheckConvergence(contracts.SimConvergenceInput{}, &out); status != contracts.SimStatusConvergenceFail {
+		t.Fatalf("CheckConvergence status = %v", status)
+	}
+}
+
+func TestSimulationEnvironmentDefaults(t *testing.T) {
+	clearSimEnv(t)
+	t.Setenv("MP_SIM_CONCURRENCY", "16")
+	t.Setenv("MP_SIM_DURATION", "2s")
+	t.Setenv("MP_MATCH_DURATION_MEAN", "3000000000")
+	t.Setenv("MP_MATCH_DURATION_STD", "500ms")
+	t.Setenv("MP_MAX_SESSION_LOSSES", "3")
+	t.Setenv("MP_TICK_RATE", "100ms")
+
+	eng, status := newEngine(contracts.SimConfig{})
+	if status != contracts.SimStatusOK {
+		t.Fatalf("newEngine status = %v", status)
+	}
+	if eng.config.ConcurrentPlayers != 16 ||
+		eng.config.DurationNanos != 2_000_000_000 ||
+		eng.config.MatchMeanNanos != 3_000_000_000 ||
+		eng.config.MatchStdNanos != 500_000_000 ||
+		eng.config.MaxSessionLosses != 3 ||
+		eng.config.TickRateNanos != 100_000_000 {
+		t.Fatalf("env defaults not applied: %+v", eng.config)
 	}
 }
 
@@ -109,7 +147,7 @@ func TestPostMatchFloorMutationAndQuit(t *testing.T) {
 	state.Phase = contracts.SimPhasePostMatch
 	state.LastWon = false
 	state.TiltFactor = 1
-	if status := eng.SimPlayerTick(contracts.SimTickInput{NowUnixNano: 55, OutcomeRoll: 1, MutationRoll: 0, MutationDim: 2, MutationSign: 1}, &state, &out); status != contracts.SimStatusOK || !out.MutatedDeck || state.LastMutatedAt != 55 || state.Phase != contracts.SimPhaseQuit {
+	if status := eng.SimPlayerTick(contracts.SimTickInput{NowUnixNano: 55, OutcomeRoll: 1, MutationRoll: 0, MutationDim: 2, MutationSign: 1}, &state, &out); status != contracts.SimStatusOK || !out.MutatedDeck || !out.QuitSession || state.LastMutatedAt != 55 || state.Phase != contracts.SimPhaseQuit {
 		t.Fatalf("mutation/quit status=%v out=%+v state=%+v", status, out, state)
 	}
 	if mag := magnitude(state.Ticket.DeckVector); abs(mag-1) > 0.00001 {
@@ -308,4 +346,14 @@ func abs(v float32) float32 {
 		return -v
 	}
 	return v
+}
+
+func clearSimEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("MP_SIM_CONCURRENCY", "")
+	t.Setenv("MP_SIM_DURATION", "")
+	t.Setenv("MP_MATCH_DURATION_MEAN", "")
+	t.Setenv("MP_MATCH_DURATION_STD", "")
+	t.Setenv("MP_MAX_SESSION_LOSSES", "")
+	t.Setenv("MP_TICK_RATE", "")
 }

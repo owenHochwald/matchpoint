@@ -3,6 +3,9 @@ package simulation
 
 import (
 	"math"
+	"os"
+	"strconv"
+	"time"
 
 	"matchpoint/contracts"
 )
@@ -54,7 +57,7 @@ type engine struct {
 }
 
 func productionConfig() contracts.SimConfig {
-	return contracts.SimConfig{
+	config := contracts.SimConfig{
 		ConcurrentPlayers: contracts.SimDefaultConcurrentPlayers,
 		DurationNanos:     contracts.SimDefaultDurationNanos,
 		MatchMeanNanos:    contracts.SimDefaultMatchMeanNanos,
@@ -62,6 +65,30 @@ func productionConfig() contracts.SimConfig {
 		MaxSessionLosses:  contracts.SimDefaultMaxSessionLosses,
 		TickRateNanos:     contracts.SimDefaultTickRateNanos,
 	}
+	if value, ok := envUint32("MP_SIM_CONCURRENCY"); ok {
+		config.ConcurrentPlayers = value
+	}
+	if value, ok := envDurationNanos("MP_SIM_DURATION"); ok {
+		config.DurationNanos = value
+	}
+	if value, ok := envDurationNanos("MP_MATCH_DURATION_MEAN"); ok {
+		config.MatchMeanNanos = value
+	}
+	if value, ok := envDurationNanos("MP_MATCH_DURATION_STD"); ok {
+		config.MatchStdNanos = value
+	}
+	if value, ok := envUint16("MP_MAX_SESSION_LOSSES"); ok {
+		config.MaxSessionLosses = value
+	}
+	if value, ok := envDurationNanos("MP_TICK_RATE"); ok {
+		config.TickRateNanos = value
+	}
+	return config
+}
+
+// NewEngine creates a deterministic simulation engine with defaults applied.
+func NewEngine(config contracts.SimConfig) (contracts.SimulationEngine, contracts.SimStatus) {
+	return newEngine(config)
 }
 
 func newEngine(config contracts.SimConfig) (*engine, contracts.SimStatus) {
@@ -73,23 +100,24 @@ func newEngine(config contracts.SimConfig) (*engine, contracts.SimStatus) {
 }
 
 func fillDefaults(config contracts.SimConfig) contracts.SimConfig {
+	defaults := productionConfig()
 	if config.ConcurrentPlayers == 0 {
-		config.ConcurrentPlayers = contracts.SimDefaultConcurrentPlayers
+		config.ConcurrentPlayers = defaults.ConcurrentPlayers
 	}
 	if config.DurationNanos == 0 {
-		config.DurationNanos = contracts.SimDefaultDurationNanos
+		config.DurationNanos = defaults.DurationNanos
 	}
 	if config.MatchMeanNanos == 0 {
-		config.MatchMeanNanos = contracts.SimDefaultMatchMeanNanos
+		config.MatchMeanNanos = defaults.MatchMeanNanos
 	}
 	if config.MatchStdNanos == 0 {
-		config.MatchStdNanos = contracts.SimDefaultMatchStdNanos
+		config.MatchStdNanos = defaults.MatchStdNanos
 	}
 	if config.MaxSessionLosses == 0 {
-		config.MaxSessionLosses = contracts.SimDefaultMaxSessionLosses
+		config.MaxSessionLosses = defaults.MaxSessionLosses
 	}
 	if config.TickRateNanos == 0 {
-		config.TickRateNanos = contracts.SimDefaultTickRateNanos
+		config.TickRateNanos = defaults.TickRateNanos
 	}
 	return config
 }
@@ -164,6 +192,7 @@ func (e *engine) SimPlayerTick(input contracts.SimTickInput, state *contracts.Si
 		out.CompletedMatch = true
 	case contracts.SimPhasePostMatch:
 		out.MutatedDeck = e.applyPostMatch(input, state)
+		out.QuitSession = state.Phase == contracts.SimPhaseQuit
 	case contracts.SimPhaseQuit:
 		out.Phase = state.Phase
 		return contracts.SimStatusNoop
@@ -396,6 +425,45 @@ func clamp01(v float32) float32 {
 		return 1
 	}
 	return v
+}
+
+func envUint32(key string) (uint32, bool) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint32(value), true
+}
+
+func envUint16(key string) (uint16, bool) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(raw, 10, 16)
+	if err != nil {
+		return 0, false
+	}
+	return uint16(value), true
+}
+
+func envDurationNanos(key string) (int64, bool) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0, false
+	}
+	if duration, err := time.ParseDuration(raw); err == nil {
+		return int64(duration), true
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func mix(v uint64) uint64 {
