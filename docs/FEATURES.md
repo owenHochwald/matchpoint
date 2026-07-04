@@ -775,7 +775,7 @@ implemented, reviewing, or blocked, use `docs/SESSIONS.md`.
 - [x] ~~eomm - Loser's pool, retention matches, monetization triggers~~
 - [x] ~~vectorarch - 8-dim archetype vector + cosine similarity engine~~
 - [x] ~~simulation - 100k goroutine player state machine harness~~
-- [ ] telemetry - Async ring-buffer telemetry + web frontend bridge
+- [x] ~~telemetry - Async ring-buffer telemetry + web frontend bridge~~
 
 **Estimated module complexity:**
 

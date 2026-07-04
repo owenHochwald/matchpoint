@@ -42,11 +42,12 @@ commands, the command should do the same four steps and no more.
 | --- | --- | --- |
 | vectorarch | complete | Reviewed, patched for downstream construction and `MP_COUNTER_THRESHOLD`, and checked in `docs/FEATURES.md`. |
 | simulation | complete | Reviewed, patched quit output and env-configurable defaults, and checked in `docs/FEATURES.md`. |
-| telemetry | not_started | Next module. |
+| telemetry | complete | Async metrics ring, WebSocket visualizer bridge, tests, race run, benchmarks, full tests, and vet are clean. |
 
 ## Last Resume Notes
 
 - Historical contract/spec/report/task files are context only.
 - Do not create new planning reports, checker reports, task handoff files, or
   module READMEs unless explicitly requested.
-- On resume, start telemetry.
+- On resume, all listed modules are complete; choose the next human-directed
+  follow-up.
