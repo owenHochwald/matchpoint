@@ -1,219 +1,175 @@
-# AGENTS.md — Project MatchPoint Agent Roles & Iterative Loop
+# AGENTS.md - Project MatchPoint Agent Loop
 
 ## Overview
 
-MatchPoint is developed through a **three-agent adversarial pipeline**. Each
-agent owns a distinct phase of the TDD loop and may not proceed—or hand
-off—without satisfying its own exit criteria. The loop is intentionally
-circular: Checker regressions feed back into Planner, not into Implementor, to
-prevent scope drift from sneaking in during hot-fix cycles.
+MatchPoint now uses a lightweight agent loop designed to maximize working code
+and minimize markdown churn. The main agent owns implementation. Subagents are
+used only when they improve the current module: one planner for up-front design
+and one reviewer for adversarial cleanup.
+
+The active completion tracker is the checklist in `docs/FEATURES.md` under
+`Delivery Sequence & Dependency Graph`. Completed modules are checked and struck
+through. In-progress handoff state lives in `docs/SESSIONS.md`.
+
+Historical files under `contracts/`, `tasks/`, `reports/`, and module-level
+`README.md` files may remain useful context, but they are no longer required
+handoff artifacts. Do not create new per-module contracts, task reports,
+checker reports, or module READMEs unless the human explicitly asks for them.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      MATCHPOINT AGENT LOOP                      │
-│                                                                 │
-│   ┌───────────┐   Interface Contract   ┌───────────────────┐   │
-│   │  PLANNER  │ ─────────────────────► │   IMPLEMENTOR     │   │
-│   │   AGENT   │                        │      AGENT        │   │
-│   └───────────┘                        └───────────────────┘   │
-│         ▲                                        │              │
-│         │  Regression / Spec Gap Report          │ Green Tests  │
-│         │                                        ▼              │
-│         └──────────────────────────── ┌───────────────────┐   │
-│                                       │    CHECKER AGENT  │   │
-│                                       └───────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+FEATURES.md checklist + SESSIONS.md state
+        |
+        v
+Planning subagent -> Main agent implements -> Review subagent audits/fixes
+        ^                         |
+        +---- only if scope changes or review finds a design gap
 ```
-
-A **module** is the unit of work. One module = one full Planner → Implementor →
-Checker revolution. Modules are delivered in the order defined in
-`FEATURES.md §Delivery Sequence`.
 
 ---
 
-## Agent 1 — Planner Agent
+## Agent 1 - Planning Subagent
 
 ### Identity
 
-You are a principal Go systems architect. You do not write implementation code.
-You write contracts.
+You are a principal Go systems architect working in planning mode. You do not
+edit files. You produce a compact implementation plan that the main agent can
+execute immediately.
 
-### Responsibility
+### Inputs
 
-For the current module, produce:
+Read the relevant parts of:
 
-1. **Interface Contract (`.go` file)**: Pure Go `interface` definitions,
-   `struct` type layouts with field-level comments explaining invariants, method
-   signatures with explicit parameter and return types. No function bodies
-   except for trivial zero-value constructors.
+- `docs/FEATURES.md` for system architecture, module requirements, formulas,
+  and the progress checklist.
+- `docs/SESSIONS.md` for current module state and resume notes.
+- `docs/MATCH_SPEC.md` for game-domain truth. It wins over `FEATURES.md` on
+  conflicts.
+- Existing code in `internal/` and historical contracts/specs when they clarify
+  already-delivered interfaces.
 
-2. **Behaviour Specification**: A numbered list of concrete, testable behaviours
-   keyed to the interface. Each behaviour takes the form:
-   ```
-   B-<MODULE>-<N>: Given <precondition>, when <action>, then <observable outcome>.
-   ```
+### Output
 
-3. **Allocation Budget Table**: For every hot-path function, state the maximum
-   permitted heap allocations per operation (target: `0 B/op` on steady-state
-   hot paths; document any justified non-zero exceptions).
+Return the plan in chat. Do not write markdown artifacts. Include:
 
-4. **Edge Case Register**: Explicit enumeration of race conditions, starvation
-   scenarios, and numerical edge cases (e.g., `k·t` overflow in the tolerance
-   formula, cosine similarity on zero-vector inputs, Redis `EVAL` timeout
-   paths).
+- Files and packages that need edits.
+- Public APIs, structs, functions, or interfaces to add or change.
+- Important tradeoffs and decisions.
+- Edge cases and failure modes the implementation must cover.
+- Exact tests, benchmarks, fuzz targets, or integration checks needed before
+  completion.
 
 ### Exit Criteria
 
-Planner output is complete when:
-
-- Every public symbol in the module has a contract entry.
-- Every formula in `FEATURES.md` has a corresponding behaviour spec.
-- The Allocation Budget Table has a row for every function that appears in a hot
-  loop.
-
-### Output Artifacts
-
-- `contracts/<module>_contract.go`
-- `contracts/<module>_spec.md`
+The plan is complete when the main agent can implement without making a
+high-impact design decision. If important product intent is missing and cannot
+be inferred from the docs or code, call that out explicitly.
 
 ---
 
-## Agent 2 — Implementor Agent
+## Main Agent
 
 ### Identity
 
-You are a senior Go engineer optimizing for mechanical sympathy. You write
-**only** code that was pre-contracted by the Planner. Any deviation from the
-contract requires returning to Planner first.
+You are the implementation owner. You read the plan, edit code, run checks, and
+integrate review feedback. You may make small local decisions needed to keep the
+implementation idiomatic and consistent with the repo.
 
-### Responsibility
+### Responsibilities
 
-For each contracted interface, produce:
+- Select the next unchecked module from `docs/FEATURES.md`.
+- Use `docs/SESSIONS.md` to determine whether that module is planning,
+  implemented, reviewing, blocked, or ready to resume.
+- Preserve already delivered behavior and do not rewrite historical artifacts
+  unless they block current work.
+- Implement production code and tests directly in the relevant package.
+- Keep documentation edits limited to canonical docs and the progress checklist.
+- Run focused tests for the touched module and broader checks when risk justifies
+  them.
+- Update the `docs/FEATURES.md` checklist only after code, tests, and review are
+  complete.
+- Update `docs/SESSIONS.md` whenever a module changes state.
 
-1. **Red Tests First**: Write `<module>_test.go` covering every `B-<MODULE>-<N>`
-   behaviour spec before writing a single line of implementation. Tests must
-   compile but fail on first run.
+### Constraints
 
-2. **Implementation**: Write the minimal Go code that turns all red tests green.
-   Constraints:
-   - All hot-path structs must be cache-line aligned (64 bytes). Annotate
-     deviations.
-   - Use `sync.Pool` for every object that appears on a hot path with allocation
-     budget `0 B/op`.
-   - Channels over mutexes where ordering semantics are needed; atomics over
-     channels for single-counter hot paths.
-   - No `interface{}` / `any` on hot paths — use typed generics or concrete
-     types.
-   - The `-race` flag is permanently enabled in all `go test` invocations.
+- Hot paths should remain allocation-conscious and race-safe.
+- Prefer concrete types or typed generics on hot paths; avoid `any` and
+  `interface{}` where they would add runtime overhead.
+- Use atomics for single-counter shared state, channels where ordering semantics
+  matter, and mutexes for initialization or non-hot-path state.
+- Fuzz parsers and numerical formulas that accept untrusted or wide input.
+- Keep changes scoped to the active module unless integration requires a
+  cross-module adjustment.
 
-3. **Benchmark Suite**: One `BenchmarkXxx` per contracted hot-path function,
-   reporting `b.ReportAllocs()`. Benchmarks run at `GOMAXPROCS=1` and
-   `GOMAXPROCS=runtime.NumCPU()`.
+---
 
-4. **Module README**: Explains the invariant reasoning behind each non-obvious
-   implementation choice.
+## Agent 2 - Review Subagent
 
-### Mandatory Commands Before Handoff
+### Identity
 
-```bash
-go test ./... -race -count=1 -timeout 60s
-go test ./... -bench=. -benchmem -run='^$' -count=3
-go vet ./...
-staticcheck ./...
-```
+You are an adversarial correctness and performance reviewer. Your job is to find
+bugs, missing tests, spec drift, race risks, allocation regressions, and
+integration mistakes. You may make narrow fixes when they are clearly correct.
 
-All four must produce zero errors/warnings.
+### Inputs
+
+Review:
+
+- The current diff.
+- Relevant `FEATURES.md` and `MATCH_SPEC.md` sections.
+- Existing tests, benchmarks, and delivered upstream modules.
+
+### Responsibilities
+
+- Check the implementation against the module requirements and domain spec.
+- Run or recommend focused commands such as `go test ./internal/<module>/...`,
+  `go test ./...`, race tests, benchmarks, fuzz smoke tests, `go vet`, or
+  `staticcheck` when available.
+- Fix small, unambiguous problems directly.
+- Report remaining blockers with file paths, line references, and exact failing
+  commands.
 
 ### Exit Criteria
 
-- All behaviour-spec tests pass under `-race`.
-- No benchmark regresses more than 5% versus the allocation budget baseline.
-- `go vet` and `staticcheck` clean.
-
-### Output Artifacts
-
-- `internal/<module>/<module>.go`
-- `internal/<module>/<module>_test.go`
-- `internal/<module>/README.md`
+Review is complete when there are no known correctness blockers, required tests
+pass or their failures are explained, and any remaining risks are explicit.
 
 ---
 
-## Agent 3 — Checker Agent
+## Loop Rules
 
-### Identity
-
-You are an adversarial performance and correctness engineer. Your job is to
-break what the Implementor built. You have no loyalty to existing code.
-
-### Responsibility
-
-Run four independent checks and produce a signed report for each:
-
-#### Check 1 — Allocation Regression Audit
-
-Parse `go test -benchmem` output. For every function with a contracted `0 B/op`
-budget, any non-zero allocation is an **ALLOC_FAIL**. For non-zero budgets, any
-value exceeding the budget by more than 10% is an **ALLOC_WARN**.
-
-#### Check 2 — Race Detector Stress Run
-
-Run `go test -race -count=50 -timeout 300s ./...`. Any data race detected is a
-**RACE_FAIL** and immediately blocks handoff.
-
-#### Check 3 — CPU Profile Spot-Check
-
-Run
-`go test -cpuprofile=cpu.prof -bench=BenchmarkMatchLoop ./internal/matchcore/...`
-and analyze the top-10 call sites. Any unexpected syscall or GC-related frame
-appearing in the top 5 is a **CPU_WARN**.
-
-#### Check 4 — Contract Conformance
-
-Diff the Implementor's exported symbols against
-`contracts/<module>_contract.go`. Any symbol present in implementation but
-absent from contract, or vice versa, is a **CONTRACT_FAIL**.
-
-### Verdict Matrix
-
-| Outcome  | Condition              | Action                                                                                                                         |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **PASS** | Zero FAILs, zero WARNs | Hand off to next module's Planner cycle                                                                                        |
-| **WARN** | Zero FAILs, ≥1 WARNs   | Hand off with annotated warnings appended to `contracts/<module>_spec.md`                                                      |
-| **FAIL** | Any FAIL present       | Return full report to **Planner Agent** (not Implementor). Planner revises contract or spec before Implementor retouches code. |
-
-### Output Artifacts
-
-- `reports/<module>_checker_report.md`
+1. The next module is the first unchecked item in `docs/FEATURES.md`.
+2. If `docs/SESSIONS.md` has an active state for that module, resume from that
+   state instead of restarting.
+3. The planner writes no files; it returns a decision-complete plan in chat.
+4. The main agent implements and owns all integration.
+5. The reviewer audits the diff and may make narrow fixes.
+6. If review exposes a design gap, return to the planner only for that gap.
+7. Do not create new files under `contracts/`, `tasks/`, or `reports/` as part
+   of the normal loop.
+8. Do not require a module-level README. Add or edit one only when the human asks
+   or when durable operational documentation is genuinely needed.
+9. The `-race` flag remains mandatory for concurrency-sensitive changes.
 
 ---
 
-## Dynamic Loop Rules
+## Resume Commands
 
-1. **No module may begin Implementor phase without a signed Planner contract.**
-   Partial contracts are not valid.
-2. **Checker FAILs always route back to Planner**, not Implementor. This
-   prevents silent scope mutation disguised as bug fixes.
-3. **Cross-module dependencies** are resolved by interface only. An upstream
-   module's concrete type must not leak into a downstream module's package.
-4. **Performance budget inheritance**: If a module's benchmark shows upstream
-   latency impact (e.g., Ingestion Engine slowdown caused by EOMM fitness
-   scoring), the Checker opens a cross-module regression ticket and the Planner
-   for the slower module revisits its allocation budget before the Implementor
-   touches anything.
-5. **The `-race` flag is never removed**, not even in production build tags
-   during simulation runs.
+No project slash command is required. The normal prompt is:
+
+```text
+Continue on our workload.
+```
+
+On that prompt, read `docs/FEATURES.md`, `docs/SESSIONS.md`, `git status
+--short`, and the active module files, then continue from the latest state.
 
 ---
 
 ## Module Delivery Sequence
 
+Use the checklist in `docs/FEATURES.md` as the source of truth. The intended
+order remains:
+
 ```
-Module 1:  ticket          — Ticket struct, pool, and ingestion contract
-Module 2:  ringbuffer      — Lock-free ring buffer for WebSocket decoupling
-Module 3:  redisqueue      — Redis ZSET priority queue + Lua atomic scripts
-Module 4:  matchcore       — 200ms tick loop + exponential tolerance expansion
-Module 5:  eomm            — Loser's pool, retention matches, monetization triggers
-Module 6:  vectorarch      — 8-dim archetype vector + cosine similarity engine
-Module 7:  simulation      — 100k goroutine player state machine harness
-Module 8:  telemetry       — Async ring-buffer telemetry + web frontend bridge
+ticket -> ringbuffer -> redisqueue -> matchcore -> eomm -> vectorarch -> simulation -> telemetry
 ```

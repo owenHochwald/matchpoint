@@ -410,9 +410,10 @@ a secondary preference signal in segment matching to create engaging mirrors.
 
 For the simulation harness evaluating 100k players, the dot product loop over
 `[8]float32` is a candidate for manual SIMD via Go assembly or `unsafe`
-intrinsics. The Planner must document this as an optimization escape hatch, but
-the baseline implementation must use pure Go for correctness verification. The
-Checker benchmarks will flag if the dot product path becomes a top-5 CPU frame.
+intrinsics. The planning subagent should document this as an optimization escape
+hatch, but the baseline implementation must use pure Go for correctness
+verification. Review benchmarks will flag if the dot product path becomes a
+top-5 CPU frame.
 
 ---
 
@@ -658,7 +659,7 @@ floor, this is ~400MB stack space. Acceptable for bare-metal with ≥8GB RAM.
 | `sync.Pool`           | stdlib pool (internal locking)      | Pool design amortizes lock cost    |
 
 **Rule:** If a variable is shared between two or more goroutines, it must appear
-in this table with its access mechanism documented. The Checker agent will audit
+in this table with its access mechanism documented. The review agent will audit
 this table against the implementation on each module delivery.
 
 ### 11.3 Channel Discipline
@@ -716,10 +717,10 @@ Expose at `/metrics`:
 ### 13.1 TDD Flow
 
 ```
-1. Planner writes B-<MODULE>-<N> behaviour specs
-2. Implementor writes failing tests for each spec
-3. Implementor writes minimal code to pass
-4. Checker runs full audit suite
+1. Planning subagent identifies files, APIs, decisions, risks, and tests
+2. Main agent writes focused tests and implementation
+3. Review subagent audits the diff and may make narrow fixes
+4. Main agent runs required checks
 5. Coverage must be ≥ 85% on all non-generated packages
 ```
 
@@ -756,10 +757,25 @@ ringbuffer ──► matchcore ──► eomm ──► vectorarch ──► sim
               redisqueue                            telemetry ◄──┘
 ```
 
-**Strict rule:** No module may import another module that has not yet passed
-Checker sign-off. Use interface stubs for upstream dependencies during
-development; replace with real implementations after sign-off. This enforces
-contract-first thinking at the package level.
+**Strict rule:** No module may depend on another module that is not marked
+complete in the checklist below. Use narrow interfaces or local fakes for
+upstream dependencies during development; replace with real implementations
+after review is complete.
+
+### 14.1 Delivery Checklist
+
+This checklist is the source of truth for remaining feature work. Completed
+items are checked and struck through. For in-progress state such as planned,
+implemented, reviewing, or blocked, use `docs/SESSIONS.md`.
+
+- [x] ~~ticket - Ticket struct, pool, and ingestion contract~~
+- [x] ~~ringbuffer - Lock-free ring buffer for WebSocket decoupling~~
+- [x] ~~redisqueue - Redis ZSET priority queue + Lua atomic scripts~~
+- [x] ~~matchcore - 200ms tick loop + exponential tolerance expansion~~
+- [x] ~~eomm - Loser's pool, retention matches, monetization triggers~~
+- [x] ~~vectorarch - 8-dim archetype vector + cosine similarity engine~~
+- [x] ~~simulation - 100k goroutine player state machine harness~~
+- [ ] telemetry - Async ring-buffer telemetry + web frontend bridge
 
 **Estimated module complexity:**
 

@@ -364,7 +364,7 @@ in simulation mode for EOMM accuracy validation.
 
 ## 4. Success Metrics & Acceptance Criteria
 
-These are the quantitative targets the system must hit. The Checker agent
+These are the quantitative targets the system must hit. The review agent
 validates these in the macro-simulation run (Module 7). A simulation run
 that does not meet these criteria at the specified population is a system
 failure, not a benchmark warning.
@@ -432,13 +432,13 @@ ground truth when making implementation and contract decisions:
    manipulation only applies to the retention and monetization pools.
 
 3. **The server never trusts churn_risk or monetization_p from the client.**
-   These are derived server-side only. Any Implementor code that reads
+   These are derived server-side only. Any implementation code that reads
    these from the wire payload has a security bug.
 
 4. **Tier floor protection is a trophy update rule, not a matchmaking rule.**
    The matchmaker matches by trophies, not by tier. Floor protection only
    applies when updating trophies after a match result.
 
-5. **The 48-card roster is fixed for v1.** The Implementor must not design
+5. **The 48-card roster is fixed for v1.** The implementation must not design
    the card system to require runtime card table updates. The table is a
    compile-time constant (`var CardTable = [48]CardDef{...}`).

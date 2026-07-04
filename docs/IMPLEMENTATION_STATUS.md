@@ -2,6 +2,9 @@
 
 Current as of 2026-07-01.
 
+This file is historical. Current completion state lives in
+`docs/FEATURES.md`, and active resume state lives in `docs/SESSIONS.md`.
+
 ## Module Status
 
 | Module | State | Checker verdict | Notes |
