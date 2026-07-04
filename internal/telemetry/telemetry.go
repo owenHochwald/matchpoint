@@ -2,13 +2,24 @@
 package telemetry
 
 import (
+	"bufio"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
+	"net"
+	"net/http"
+	"runtime"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"matchpoint/contracts"
 )
+
+var errWebSocketPayloadTooLarge = errors.New("telemetry: websocket payload too large")
 
 const (
 	DefaultRingCapacity uint64 = 65_536
@@ -284,8 +295,201 @@ func EmitFrame(w io.Writer, frame Frame) Status {
 	return StatusOK
 }
 
+type Server struct {
+	Sink          *Sink
+	FrameEvery    time.Duration
+	NowUnixNano   func() int64
+	EOMMAccuracy  func() float32
+	AllocSnapshot func() uint64
+}
+
+func NewServer(sink *Sink) *Server {
+	return &Server{
+		Sink:       sink,
+		FrameEvery: 100 * time.Millisecond,
+		NowUnixNano: func() int64 {
+			return time.Now().UnixNano()
+		},
+		AllocSnapshot: heapAllocBytes,
+	}
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/telemetry" {
+		s.serveWebSocket(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, VisualizerHTML)
+}
+
+func (s *Server) serveWebSocket(w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "websocket upgrade required", http.StatusBadRequest)
+		return
+	}
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	writeHandshake(rw, key)
+	rw.Flush()
+
+	interval := s.FrameEvery
+	if interval <= 0 {
+		interval = 100 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if status := s.writeWebSocketFrame(rw, conn); status != StatusOK {
+			return
+		}
+		rw.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) writeWebSocketFrame(w io.Writer, conn net.Conn) Status {
+	if s == nil || s.Sink == nil {
+		return StatusInvalidInput
+	}
+	var frame Frame
+	status := s.Sink.SnapshotFrame(s.now(), s.accuracy(), s.allocBytes(), &frame)
+	if status != StatusOK {
+		return status
+	}
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		return StatusInvalidInput
+	}
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	if err := WriteWebSocketText(w, payload); err != nil {
+		return StatusInvalidInput
+	}
+	return StatusOK
+}
+
+func (s *Server) now() int64 {
+	if s.NowUnixNano != nil {
+		return s.NowUnixNano()
+	}
+	return time.Now().UnixNano()
+}
+
+func (s *Server) accuracy() float32 {
+	if s.EOMMAccuracy != nil {
+		return s.EOMMAccuracy()
+	}
+	return 0
+}
+
+func (s *Server) allocBytes() uint64 {
+	if s.AllocSnapshot != nil {
+		return s.AllocSnapshot()
+	}
+	return heapAllocBytes()
+}
+
+func writeHandshake(w *bufio.ReadWriter, key string) {
+	_, _ = io.WriteString(w, "HTTP/1.1 101 Switching Protocols\r\n")
+	_, _ = io.WriteString(w, "Upgrade: websocket\r\n")
+	_, _ = io.WriteString(w, "Connection: Upgrade\r\n")
+	_, _ = io.WriteString(w, "Sec-WebSocket-Accept: "+WebSocketAcceptKey(key)+"\r\n\r\n")
+}
+
+func WebSocketAcceptKey(key string) string {
+	hash := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+func WriteWebSocketText(w io.Writer, payload []byte) error {
+	header := [4]byte{0x81}
+	switch {
+	case len(payload) < 126:
+		header[1] = byte(len(payload))
+		if _, err := w.Write(header[:2]); err != nil {
+			return err
+		}
+	case len(payload) <= 65535:
+		header[1] = 126
+		header[2] = byte(len(payload) >> 8)
+		header[3] = byte(len(payload))
+		if _, err := w.Write(header[:4]); err != nil {
+			return err
+		}
+	default:
+		return errWebSocketPayloadTooLarge
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+func heapAllocBytes() uint64 {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return stats.HeapAlloc
+}
+
 func (s *Sink) write(event Event) {
 	if s.ring != nil {
 		_ = s.ring.Write(event)
 	}
 }
+
+const VisualizerHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MatchPoint Telemetry</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#172033;background:#f5f7fb}
+body{margin:0}
+main{max-width:1120px;margin:0 auto;padding:28px}
+header{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:24px}
+h1{font-size:30px;margin:0}
+.status{font-size:13px;color:#526071}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.panel{background:white;border:1px solid #dbe2ee;border-radius:8px;padding:16px}
+.label{font-size:12px;color:#66758a;text-transform:uppercase}
+.value{font-size:28px;font-weight:700;margin-top:6px}
+.bars{display:grid;gap:10px}
+.bar{height:28px;background:#e8edf6;border-radius:6px;overflow:hidden;position:relative}
+.fill{height:100%;background:#1f8a70;width:0}
+.bar span{position:absolute;inset:0;display:flex;align-items:center;padding-left:10px;font-size:13px}
+@media (max-width:800px){.grid{grid-template-columns:1fr 1fr}header{display:block}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>MatchPoint Telemetry</h1><div class="status" id="status">connecting</div></div></header>
+<section class="grid">
+<div class="panel"><div class="label">Matches Last Tick</div><div class="value" id="matches">0</div></div>
+<div class="panel"><div class="label">EOMM Accuracy</div><div class="value" id="accuracy">0.00</div></div>
+<div class="panel"><div class="label">Heap MB</div><div class="value" id="heap">0.0</div></div>
+<div class="panel"><div class="label">Churn Alerts</div><div class="value" id="churn">0</div></div>
+</section>
+<section class="panel"><div class="label">Queue Depths</div><div class="bars" id="bars"></div></section>
+</main>
+<script>
+const bars=document.getElementById('bars');
+for(let i=0;i<5;i++){const b=document.createElement('div');b.className='bar';b.innerHTML='<div class="fill"></div><span>Segment '+i+': 0</span>';bars.appendChild(b)}
+const ws=new WebSocket('ws://'+location.host+'/telemetry');
+ws.onopen=()=>status.textContent='connected';
+ws.onclose=()=>status.textContent='disconnected';
+ws.onmessage=e=>{const f=JSON.parse(e.data);matches.textContent=f.matchesLastTick;accuracy.textContent=Number(f.eommAccuracy).toFixed(2);heap.textContent=(f.allocBytesHeap/1048576).toFixed(1);churn.textContent=f.churnAlerts;const max=Math.max(1,...f.queueDepths);[...bars.children].forEach((b,i)=>{b.children[0].style.width=(f.queueDepths[i]/max*100)+'%';b.children[1].textContent='Segment '+i+': '+f.queueDepths[i]})};
+</script>
+</body>
+</html>`

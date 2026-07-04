@@ -2,6 +2,9 @@ package telemetry
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"testing"
 	"unsafe"
@@ -84,6 +87,30 @@ func TestEmitFrameWritesNewlineDelimitedJSON(t *testing.T) {
 	want := `{"ts":1718000000000000000,"queueDepths":[120,340,89,12,3],"matchesLastTick":47,"eommAccuracy":0.82,"allocBytesHeap":4194304,"churnAlerts":3}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json=%q, want %q", got, want)
+	}
+}
+
+func TestWebSocketHelpersAndVisualizer(t *testing.T) {
+	key := "dGhlIHNhbXBsZSBub25jZQ=="
+	if got := WebSocketAcceptKey(key); got != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
+		t.Fatalf("accept key=%q", got)
+	}
+
+	var frame bytes.Buffer
+	if err := WriteWebSocketText(&frame, []byte("hello")); err != nil {
+		t.Fatalf("WriteWebSocketText err=%v", err)
+	}
+	if got, want := frame.Bytes(), []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}; !bytes.Equal(got, want) {
+		t.Fatalf("ws frame=%v, want %v", got, want)
+	}
+
+	server := NewServer(NewSink(nil))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	body, _ := io.ReadAll(rec.Result().Body)
+	if rec.Code != http.StatusOK || !bytes.Contains(body, []byte("MatchPoint Telemetry")) {
+		t.Fatalf("visualizer code=%d body=%q", rec.Code, string(body))
 	}
 }
 
