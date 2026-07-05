@@ -309,7 +309,7 @@ func (scoreCodec) EncodeScore(trophies int32, enqueuedAtUnixNano int64, out *con
 		}
 		return contracts.RedisStatusInvalidScore
 	}
-	micros := enqueuedAtUnixNano / 1_000
+	micros := (enqueuedAtUnixNano / 1_000) % contracts.RedisScoreTrophyScale
 	trophyComponent := int64(trophies) * contracts.RedisScoreTrophyScale
 	if micros > math.MaxInt64-trophyComponent {
 		*out = contracts.RedisScore{}

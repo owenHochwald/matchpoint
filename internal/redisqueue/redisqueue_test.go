@@ -182,13 +182,14 @@ func TestCodecMemberScoreRangeAndEntry(t *testing.T) {
 	if status := codec.EncodeScore(15000, enqueued, &score); status != contracts.RedisStatusOK {
 		t.Fatalf("EncodeScore status=%d", status)
 	}
-	wantScore := float64(int64(15000)*contracts.RedisScoreTrophyScale + enqueued/1000)
-	if score.Value != wantScore || score.EnqueuedAtMicros != enqueued/1000 {
-		t.Fatalf("score=%+v want value=%f micros=%d", score, wantScore, enqueued/1000)
+	wantMicros := (enqueued / 1000) % contracts.RedisScoreTrophyScale
+	wantScore := float64(int64(15000)*contracts.RedisScoreTrophyScale + wantMicros)
+	if score.Value != wantScore || score.EnqueuedAtMicros != wantMicros {
+		t.Fatalf("score=%+v want value=%f micros=%d", score, wantScore, wantMicros)
 	}
 
 	// B-REDISQUEUE-11
-	if status := codec.EncodeScore(15000, 9_100_000_000_000_000_000, &score); status != contracts.RedisStatusInvalidScore {
+	if status := codec.EncodeScore(-1, enqueued, &score); status != contracts.RedisStatusInvalidScore {
 		t.Fatalf("expected precision guard, got %d", status)
 	}
 
@@ -197,7 +198,7 @@ func TestCodecMemberScoreRangeAndEntry(t *testing.T) {
 	if status := codec.ScoreRange(3000, enqueued, 50, contracts.RedisPoolSegment1, &scoreRange); status != contracts.RedisStatusOK {
 		t.Fatalf("ScoreRange status=%d", status)
 	}
-	base := float64(int64(3000)*contracts.RedisScoreTrophyScale + enqueued/1000)
+	base := float64(int64(3000)*contracts.RedisScoreTrophyScale + wantMicros)
 	delta := float64(50 * contracts.RedisScoreTrophyScale)
 	if scoreRange.Min != base-delta || scoreRange.Max != base+delta || scoreRange.Limit != contracts.RedisCandidateLimit {
 		t.Fatalf("bad score range: %+v", scoreRange)

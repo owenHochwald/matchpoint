@@ -8,7 +8,7 @@ import "context"
 // RedisCommandTimeoutNanos is the per-command latency budget for Redis calls.
 const RedisCommandTimeoutNanos int64 = 5_000_000
 
-// RedisScoreTrophyScale is the multiplier in Trophies*1e6+enqueuedMicros.
+// RedisScoreTrophyScale is the trophy multiplier and timestamp tie-breaker modulus.
 const RedisScoreTrophyScale int64 = 1_000_000
 
 // RedisCandidateLimit is the ZRANGEBYSCORE LIMIT count used by match ticks.
@@ -159,13 +159,13 @@ type RedisMember struct {
 	Len uint8
 }
 
-// RedisScore is the composite ZSET score Trophies*1e6+EnqueuedAtMicros.
+// RedisScore is the composite ZSET score Trophies*1e6+(EnqueuedAtMicros%1e6).
 type RedisScore struct {
 	// Value is the exact float64 submitted to Redis ZADD/ZRANGEBYSCORE.
 	Value float64
 	// Trophies is the integer trophy component.
 	Trophies int32
-	// EnqueuedAtMicros is EnqueuedAt truncated from nanoseconds to microseconds.
+	// EnqueuedAtMicros is EnqueuedAt truncated from nanoseconds to microseconds and bounded to the trophy bucket.
 	EnqueuedAtMicros int64
 }
 
@@ -291,7 +291,7 @@ type RedisQueueKeyer interface {
 type RedisScoreCodec interface {
 	// EncodeMember writes playerID as the Redis ZSET member string into out.
 	EncodeMember(playerID uint64, out *RedisMember) RedisQueueStatus
-	// EncodeScore computes Trophies*1e6+truncated Unix microseconds into out.
+	// EncodeScore computes Trophies*1e6+(truncated Unix microseconds % 1e6) into out.
 	EncodeScore(trophies int32, enqueuedAtUnixNano int64, out *RedisScore) RedisQueueStatus
 	// ScoreRange computes the inclusive Redis score bounds for a tolerance query.
 	ScoreRange(trophies int32, enqueuedAtUnixNano int64, toleranceTrophies int32, pool RedisQueuePool, out *RedisScoreRange) RedisQueueStatus

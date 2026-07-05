@@ -44,13 +44,13 @@ B-REDISQUEUE-6: Given a non-zero player ID, when `EncodeMember` writes into call
 
 B-REDISQUEUE-7: Given player ID `0`, when `EncodeMember` is called, then it returns `RedisStatusInvalidScore` and leaves a zero-length member.
 
-B-REDISQUEUE-8: Given trophies and `EnqueuedAt` nanoseconds, when `EncodeScore` is called, then the score equals `Trophies * 1e6 + EnqueuedAt_microseconds_truncated`.
+B-REDISQUEUE-8: Given trophies and `EnqueuedAt` nanoseconds, when `EncodeScore` is called, then the score equals `Trophies * 1e6 + (EnqueuedAt_microseconds_truncated % 1e6)` so trophy distance remains the dominant range-query term.
 
-B-REDISQUEUE-9: Given an `EnqueuedAt` value with a non-zero nanosecond remainder below one microsecond, when `EncodeScore` is called, then the remainder is truncated rather than rounded.
+B-REDISQUEUE-9: Given an `EnqueuedAt` value with a non-zero nanosecond remainder below one microsecond, when `EncodeScore` is called, then the remainder is truncated before the bounded microsecond tie-breaker is computed.
 
 B-REDISQUEUE-10: Given an encoded score for trophies in the MatchPoint intake range, when the value is represented as a Redis `float64`, then it preserves the integer score exactly for the expected range.
 
-B-REDISQUEUE-11: Given score encoding would overflow the exact integer precision allowed by the contract, when `EncodeScore` is called, then it returns `RedisStatusInvalidScore`.
+B-REDISQUEUE-11: Given negative trophies, negative enqueue time, or a nil destination, when `EncodeScore` is called, then it returns `RedisStatusInvalidScore`.
 
 B-REDISQUEUE-12: Given trophies, enqueue timestamp, tolerance trophies, and a valid pool, when `ScoreRange` is called, then it writes inclusive bounds `[score - tolerance*1e6, score + tolerance*1e6]` and limit `8`.
 

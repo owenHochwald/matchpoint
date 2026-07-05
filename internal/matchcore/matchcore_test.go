@@ -670,10 +670,11 @@ func (fakeCodec) EncodeMember(playerID uint64, out *contracts.RedisMember) contr
 }
 
 func (fakeCodec) EncodeScore(trophies int32, enqueuedAtUnixNano int64, out *contracts.RedisScore) contracts.RedisQueueStatus {
-	if out == nil || trophies < 0 {
+	if out == nil || trophies < 0 || enqueuedAtUnixNano < 0 {
 		return contracts.RedisStatusInvalidScore
 	}
-	*out = contracts.RedisScore{Value: float64(int64(trophies)*contracts.RedisScoreTrophyScale + enqueuedAtUnixNano/1000), Trophies: trophies, EnqueuedAtMicros: enqueuedAtUnixNano / 1000}
+	micros := (enqueuedAtUnixNano / 1000) % contracts.RedisScoreTrophyScale
+	*out = contracts.RedisScore{Value: float64(int64(trophies)*contracts.RedisScoreTrophyScale + micros), Trophies: trophies, EnqueuedAtMicros: micros}
 	return contracts.RedisStatusOK
 }
 
