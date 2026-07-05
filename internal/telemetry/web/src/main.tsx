@@ -468,6 +468,136 @@ function QueueLauncher({ onAck }: { onAck: (ack: QueueAck) => void }) {
   );
 }
 
+function LiveDemoPanel({ frame, onAck }: { frame: Frame; onAck: (ack: QueueAck) => void }) {
+  const [running, setRunning] = React.useState(false);
+  const [waves, setWaves] = React.useState(6);
+  const [waveSize, setWaveSize] = React.useState(12);
+  const [sent, setSent] = React.useState(0);
+  const [acked, setAcked] = React.useState(0);
+  const [error, setError] = React.useState("");
+  const startTotals = React.useRef({ drained: 0, searches: 0, matches: 0 });
+
+  React.useEffect(() => {
+    return () => setRunning(false);
+  }, []);
+
+  function runLiveDemo() {
+    setRunning(true);
+    setError("");
+    setSent(0);
+    setAcked(0);
+    startTotals.current = {
+      drained: frame.totalDrained,
+      searches: frame.totalCandidates,
+      matches: frame.totalMatches,
+    };
+
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(`${protocol}://${window.location.host}/queue`);
+    let wave = 0;
+    let ticketIndex = 0;
+    let closeTimer = 0;
+
+    socket.onopen = () => {
+      const sendWave = () => {
+        if (wave >= waves) {
+          window.clearInterval(interval);
+          closeTimer = window.setTimeout(() => socket.close(), 700);
+          return;
+        }
+        const baseTrophies = 3200 + (wave % 4) * 6;
+        for (let i = 0; i < waveSize; i++) {
+          const id = Date.now() * 1000 + ticketIndex;
+          socket.send(
+            JSON.stringify({
+              playerId: id,
+              trophies: baseTrophies + (i % 3),
+              deckVector: deckVector(ticketIndex),
+              churnRisk: 0.18 + (wave % 3) * 0.04,
+              monetizationP: 0.2 + (i % 4) * 0.03,
+              poolTag: 0,
+              consecLosses: i % 5 === 0 ? 2 : 0,
+              consecWins: i % 4,
+            }),
+          );
+          ticketIndex++;
+        }
+        setSent((value) => value + waveSize);
+        wave++;
+      };
+      sendWave();
+      const interval = window.setInterval(sendWave, 650);
+    };
+    socket.onmessage = (event) => {
+      setAcked((value) => value + 1);
+      onAck(JSON.parse(event.data) as QueueAck);
+    };
+    socket.onerror = () => {
+      setError("live demo websocket failed");
+      setRunning(false);
+      window.clearTimeout(closeTimer);
+    };
+    socket.onclose = () => {
+      setRunning(false);
+      window.clearTimeout(closeTimer);
+    };
+  }
+
+  const drainedDelta = Math.max(0, frame.totalDrained - startTotals.current.drained);
+  const searchDelta = Math.max(0, frame.totalCandidates - startTotals.current.searches);
+  const matchDelta = Math.max(0, frame.totalMatches - startTotals.current.matches);
+
+  return (
+    <section className="control-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="kicker">Live Simulation</span>
+          <h2>Match Parade</h2>
+        </div>
+        <Swords className="h-7 w-7 text-pink-200" />
+      </div>
+      <div className="mt-5 space-y-4">
+        <Slider label="Waves" value={waves} min={2} max={16} onChange={setWaves} />
+        <Slider label="Tickets per wave" value={waveSize} min={4} max={40} step={2} onChange={setWaveSize} />
+      </div>
+      <button className="primary-button mt-5" type="button" onClick={runLiveDemo} disabled={running}>
+        <Play className="h-5 w-5" />
+        {running ? "Streaming Tickets" : "Run Live Demo"}
+      </button>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <MiniMetric label="Sent / acked" value={`${formatNumber(sent)} / ${formatNumber(acked)}`} />
+        <MiniMetric label="Drained now" value={formatNumber(drainedDelta)} />
+        <MiniMetric label="Searches now" value={formatNumber(searchDelta)} />
+        <MiniMetric label="Matches now" value={formatNumber(matchDelta)} />
+      </div>
+      <div className="demo-flow mt-5">
+        <DemoStage label="Joining" value={sent} tone="bg-amber-300" />
+        <DemoStage label="Accepted" value={acked} tone="bg-emerald-400" />
+        <DemoStage label="Drained" value={drainedDelta} tone="bg-sky-400" />
+        <DemoStage label="Matched" value={matchDelta} tone="bg-pink-400" />
+      </div>
+      {error ? <p className="mt-3 rounded-xl bg-rose-500/25 px-4 py-2 text-sm font-bold text-white">{error}</p> : null}
+    </section>
+  );
+}
+
+function DemoStage({ label, value, tone }: { label: string; value: number; tone: string }) {
+  const lit = Math.min(8, Math.ceil(value / 4));
+  return (
+    <div className="demo-stage">
+      <div className="demo-stage-head">
+        <span>{label}</span>
+        <strong>{formatNumber(value)}</strong>
+      </div>
+      <div className="demo-tokens">
+        {Array.from({ length: 8 }, (_, index) => (
+          <i className={index < lit ? tone : ""} key={index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PoolGuide() {
   return (
     <section className="control-panel">
@@ -525,6 +655,38 @@ function FlowGuide() {
               <h3>{name}</h3>
               <p>{detail}</p>
             </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MetricGuide() {
+  const items = [
+    ["Core ticks", "How many 200ms loop pulses have run since the service started."],
+    ["Drain ring", "Tickets moved from the fast in-memory intake buffer into Redis ownership this tick."],
+    ["Search Redis", "Candidate range searches issued for drained tickets."],
+    ["Assign match", "Successful Redis Lua assignments during the latest tick."],
+    ["Empty searches", "Searches that found no legal candidate. High values mean queue shape or tolerance is not lining up."],
+    ["EOMM fit", "Total matches divided by total candidate searches. It rises when searches produce assignments."],
+    ["Redis latency", "Latest Redis command latency observed by the match loop."],
+    ["Queue depth", "Current visible intake depth per ring shard before matchcore drains it."],
+  ];
+  return (
+    <section className="arena-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="kicker">Metric Glossary</span>
+          <h2>What To Watch</h2>
+        </div>
+        <Gauge className="h-7 w-7 text-sky-200" />
+      </div>
+      <div className="metric-list mt-5">
+        {items.map(([name, detail]) => (
+          <article className="metric-card" key={name}>
+            <h3>{name}</h3>
+            <p>{detail}</p>
           </article>
         ))}
       </div>
@@ -643,6 +805,7 @@ function App() {
           </div>
           <aside className="grid content-start gap-4">
             <SimulationPanel onResult={setSimResult} />
+            <LiveDemoPanel frame={frame} onAck={setLastAck} />
             <QueueLauncher onAck={setLastAck} />
             <PoolGuide />
             <section className="control-panel">
@@ -659,6 +822,7 @@ function App() {
                 <MiniMetric label="Shard / Depth" value={lastAck ? `${lastAck.shard} / ${formatNumber(lastAck.depth)}` : "none"} />
               </div>
             </section>
+            <MetricGuide />
           </aside>
         </section>
       </div>

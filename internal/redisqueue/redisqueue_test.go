@@ -216,6 +216,31 @@ func TestCodecMemberScoreRangeAndEntry(t *testing.T) {
 	}
 }
 
+func TestScoreRangeKeepsTrophyToleranceDominantAcrossWallClockTime(t *testing.T) {
+	codec := newScoreCodec()
+	anchorTime := int64(1_783_250_000_000_000_000)
+	candidateTime := anchorTime + 5_000_000_000
+
+	var anchorRange contracts.RedisScoreRange
+	if status := codec.ScoreRange(3400, anchorTime, 50, contracts.RedisPoolSegment2, &anchorRange); status != contracts.RedisStatusOK {
+		t.Fatalf("ScoreRange status=%d", status)
+	}
+	var candidate contracts.RedisScore
+	if status := codec.EncodeScore(3400, candidateTime, &candidate); status != contracts.RedisStatusOK {
+		t.Fatalf("EncodeScore status=%d", status)
+	}
+	if candidate.Value < anchorRange.Min || candidate.Value > anchorRange.Max {
+		t.Fatalf("same-trophy candidate outside tolerance window: candidate=%f range=[%f,%f]", candidate.Value, anchorRange.Min, anchorRange.Max)
+	}
+
+	if status := codec.EncodeScore(3451, candidateTime, &candidate); status != contracts.RedisStatusOK {
+		t.Fatalf("EncodeScore status=%d", status)
+	}
+	if candidate.Value >= anchorRange.Min && candidate.Value <= anchorRange.Max {
+		t.Fatalf("out-of-tolerance candidate inside tolerance window: candidate=%f range=[%f,%f]", candidate.Value, anchorRange.Min, anchorRange.Max)
+	}
+}
+
 func TestEnqueueStatusesAndMetadata(t *testing.T) {
 	fake := newFakeRedis()
 	store, _, metrics := testStore(fake)
