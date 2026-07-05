@@ -50,24 +50,32 @@ func TestSinkImplementsMetricsAndBuildsFrame(t *testing.T) {
 	var matchSink contracts.MatchMetricsSink = sink
 	var simMetrics contracts.SimMetrics = sink
 
-	matchSink.RecordTick(contracts.MatchTickMetrics{TickID: 10, MatchesMade: 47, DurationNanos: 123})
+	matchSink.RecordTick(contracts.MatchTickMetrics{TickID: 10, DrainedTickets: 11, CandidateQueries: 7, MatchesMade: 4, EmptyQueries: 3, DurationNanos: 123})
 	matchSink.RecordRedisStatus(contracts.RedisStatusTimeout, 99)
 	matchSink.RecordEmptyQuery(contracts.RedisPoolSegment2)
+	matchSink.RecordOverrun(10, 222, 1)
+	matchSink.RecordSkippedTick(11)
 	sink.RecordQueueDepth(2, 340, 20)
 	sink.RecordChurnAlert(contracts.EOMMChurnAlertEvent{CurrentChurnRisk: 0.9, RollingWinRate: 0.2}, 30)
 	simMetrics.RecordSimDrop(99)
 
 	var frame Frame
-	if status := sink.SnapshotFrame(40, 0.82, 4_194_304, &frame); status != StatusOK {
+	if status := sink.SnapshotFrame(40, sink.EstimatedEOMMQuality(), 4_194_304, &frame); status != StatusOK {
 		t.Fatalf("SnapshotFrame status=%v", status)
 	}
 	if frame.TimestampUnixNano != 40 || frame.QueueDepths[2] != 340 ||
-		frame.MatchesLastTick != 47 || frame.EOMMAccuracy != 0.82 ||
-		frame.AllocBytesHeap != 4_194_304 || frame.ChurnAlerts != 1 {
+		frame.MatchesLastTick != 4 || frame.EOMMAccuracy != 4.0/7.0 ||
+		frame.AllocBytesHeap != 4_194_304 || frame.ChurnAlerts != 1 ||
+		frame.CoreTicks != 1 || frame.DrainedTickets != 11 || frame.CandidateQueries != 7 ||
+		frame.TotalDrained != 11 || frame.TotalCandidates != 7 || frame.TotalMatches != 4 ||
+		frame.TotalEmptyQueries != 3 ||
+		frame.EmptyQueries != 3 || frame.TickDurationNanos != 123 || frame.RedisLatencyNanos != 99 ||
+		frame.RedisStatus != uint32(contracts.RedisStatusTimeout) || frame.Overruns != 1 ||
+		frame.SkippedTicks != 1 || frame.SimDrops != 1 {
 		t.Fatalf("frame=%+v", frame)
 	}
-	if ring.Len() != 6 {
-		t.Fatalf("ring Len=%d, want 6", ring.Len())
+	if ring.Len() != 8 {
+		t.Fatalf("ring Len=%d, want 8", ring.Len())
 	}
 }
 
@@ -80,11 +88,25 @@ func TestEmitFrameWritesNewlineDelimitedJSON(t *testing.T) {
 		EOMMAccuracy:      0.82,
 		AllocBytesHeap:    4_194_304,
 		ChurnAlerts:       3,
+		CoreTicks:         12,
+		DrainedTickets:    9,
+		CandidateQueries:  8,
+		EmptyQueries:      2,
+		TotalDrained:      99,
+		TotalCandidates:   88,
+		TotalMatches:      44,
+		TotalEmptyQueries: 22,
+		TickDurationNanos: 1_500_000,
+		RedisLatencyNanos: 900_000,
+		RedisStatus:       0,
+		Overruns:          1,
+		SkippedTicks:      1,
+		SimDrops:          4,
 	}
 	if status := EmitFrame(&buf, frame); status != StatusOK {
 		t.Fatalf("EmitFrame status=%v", status)
 	}
-	want := `{"ts":1718000000000000000,"queueDepths":[120,340,89,12,3],"matchesLastTick":47,"eommAccuracy":0.82,"allocBytesHeap":4194304,"churnAlerts":3}` + "\n"
+	want := `{"ts":1718000000000000000,"queueDepths":[120,340,89,12,3],"matchesLastTick":47,"eommAccuracy":0.82,"allocBytesHeap":4194304,"churnAlerts":3,"coreTicks":12,"drainedTickets":9,"candidateQueries":8,"emptyQueries":2,"totalDrained":99,"totalCandidates":88,"totalMatches":44,"totalEmptyQueries":22,"tickDurationNanos":1500000,"redisLatencyNanos":900000,"redisStatus":0,"overruns":1,"skippedTicks":1,"simDrops":4}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json=%q, want %q", got, want)
 	}

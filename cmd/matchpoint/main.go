@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"matchpoint/contracts"
+	"matchpoint/internal/eomm"
 	"matchpoint/internal/matchcore"
 	"matchpoint/internal/redisqueue"
 	"matchpoint/internal/ringbuffer"
@@ -79,6 +80,7 @@ type simCounters struct {
 type app struct {
 	ring      contracts.TicketRingBuffer
 	telemetry *telemetry.Sink
+	logger    *slog.Logger
 }
 
 func main() {
@@ -90,10 +92,12 @@ func main() {
 		capacity = flag.Uint("ring-capacity", 1024, "ring slots per shard, power of two")
 	)
 	flag.Parse()
+	logger := slog.Default()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	logger.Info("starting matchpoint", "addr", *addr, "redis", *redisURL, "shards", *shards, "ring_capacity", *capacity)
 	rdb := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs:    []string{*redisURL},
 		Password: *redisPW,
@@ -101,9 +105,10 @@ func main() {
 	})
 	defer rdb.Close()
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		slog.Error("redis unavailable", "addr", *redisURL, "err", err)
+		logger.Error("redis unavailable", "addr", *redisURL, "err", err)
 		os.Exit(1)
 	}
+	logger.Info("redis connected", "addr", *redisURL)
 
 	redisMetrics := redisqueue.NewMetrics()
 	store, scripts := redisqueue.NewUniversalStore(rdb, contracts.RedisQueueConfig{
@@ -113,9 +118,10 @@ func main() {
 		MatchTTLSeconds:     contracts.RedisMatchTTLSeconds,
 	}, redisMetrics)
 	if result := scripts.LoadScripts(ctx); result.Status != contracts.RedisStatusOK {
-		slog.Error("redis script load failed", "status", result.Status)
+		logger.Error("redis script load failed", "status", result.Status)
 		os.Exit(1)
 	}
+	logger.Info("redis scripts loaded")
 
 	ring, err := ringbuffer.NewRingBuffer(contracts.RingConfig{
 		Shards:                  uint16(*shards),
@@ -123,28 +129,36 @@ func main() {
 		DuplicateWindowPerShard: uint32(*capacity) * 2,
 	})
 	if err != nil {
-		slog.Error("ring buffer init failed", "err", err)
+		logger.Error("ring buffer init failed", "err", err)
 		os.Exit(1)
 	}
+	logger.Info("ring buffer ready", "shards", *shards, "capacity_per_shard", *capacity)
 
 	telemetryRing, status := telemetry.NewRing(telemetry.DefaultRingCapacity)
 	if status != telemetry.StatusOK {
-		slog.Error("telemetry ring init failed", "status", status)
+		logger.Error("telemetry ring init failed", "status", status)
 		os.Exit(1)
 	}
 	telemetrySink := telemetry.NewSink(telemetryRing)
-	core, coreStatus := matchcore.NewMatchCore(matchConfig(), uint16(*shards), ring, store, redisqueue.NewKeyer(), redisqueue.NewScoreCodec(), nil, telemetrySink, nil)
-	if coreStatus != contracts.MatchCoreStatusOK {
-		slog.Error("matchcore init failed", "status", coreStatus)
+	eommScorer, eommStatus := eomm.NewEngine(contracts.EOMMConfig{})
+	if eommStatus != contracts.EOMMStatusOK {
+		logger.Error("eomm init failed", "status", eommStatus)
 		os.Exit(1)
 	}
+	logger.Info("eomm scorer ready")
+	core, coreStatus := matchcore.NewMatchCoreWithScorer(matchConfig(), uint16(*shards), ring, store, redisqueue.NewKeyer(), redisqueue.NewScoreCodec(), nil, eommScorer, telemetrySink, nil)
+	if coreStatus != contracts.MatchCoreStatusOK {
+		logger.Error("matchcore init failed", "status", coreStatus)
+		os.Exit(1)
+	}
+	logger.Info("matchcore ready", "tick_interval_ms", contracts.MatchTickIntervalNanos/1_000_000)
 
 	go func() {
 		status := core.Run(ctx)
-		slog.Info("matchcore stopped", "status", status)
+		logger.Info("matchcore stopped", "status", status)
 	}()
 
-	a := &app{ring: ring, telemetry: telemetrySink}
+	a := &app{ring: ring, telemetry: telemetrySink, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
@@ -161,11 +175,12 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	slog.Info("matchpoint listening", "addr", *addr, "redis", *redisURL)
+	logger.Info("matchpoint listening", "addr", *addr, "redis", *redisURL)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server failed", "err", err)
+		logger.Error("server failed", "err", err)
 		os.Exit(1)
 	}
+	logger.Info("matchpoint stopped")
 }
 
 func matchConfig() contracts.MatchCoreConfig {
@@ -191,18 +206,35 @@ func (a *app) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	remote := r.RemoteAddr
+	a.logger.Info("queue websocket connected", "remote", remote)
+	var accepted uint64
+	var rejected uint64
+	defer func() {
+		a.logger.Info("queue websocket closed", "remote", remote, "accepted", accepted, "rejected", rejected)
+	}()
 
 	for {
 		payload, err := readClientTextFrame(rw.Reader)
 		if err != nil {
+			if err != io.EOF {
+				a.logger.Debug("queue websocket read failed", "remote", remote, "err", err)
+			}
 			return
 		}
 		var join queueJoin
 		if err := json.Unmarshal(payload, &join); err != nil {
 			writeAck(rw, queueAck{Status: "rejected", Message: "malformed json"})
+			rejected++
 			continue
 		}
 		ack := a.enqueue(join)
+		if ack.Status == "queued" {
+			accepted++
+		} else {
+			rejected++
+			a.logger.Debug("queue ticket rejected", "remote", remote, "player", join.PlayerID, "message", ack.Message)
+		}
 		writeAck(rw, ack)
 	}
 }
@@ -231,11 +263,14 @@ func (a *app) handleSimulate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "simulation limits exceeded", http.StatusBadRequest)
 		return
 	}
+	a.logger.Info("simulation requested", "players", req.Players, "matches_per_player", req.Rounds, "seed", req.Seed)
 	resp, err := runSimulation(req)
 	if err != nil {
+		a.logger.Error("simulation failed", "players", req.Players, "matches_per_player", req.Rounds, "seed", req.Seed, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	a.logger.Info("simulation completed", "players", resp.Players, "matches_per_player", resp.Rounds, "queued", resp.Queued, "completed", resp.Completed, "quit", resp.Quit, "elapsed_ms", resp.ElapsedMillis, "converged", resp.Converged)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

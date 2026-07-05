@@ -256,6 +256,18 @@ func NewMatchCore(config contracts.MatchCoreConfig, shards uint16, ring contract
 	return newMatchCore(config, shards, ring, store, keyer, codec, clock, metrics, logger)
 }
 
+// NewMatchCoreWithScorer creates the production tick loop with an explicit fitness scorer.
+func NewMatchCoreWithScorer(config contracts.MatchCoreConfig, shards uint16, ring contracts.TicketRingBuffer, store contracts.RedisQueueStore, keyer contracts.RedisQueueKeyer, codec contracts.RedisScoreCodec, clock contracts.MatchClock, scorer contracts.MatchFitnessScorer, metrics contracts.MatchMetricsSink, logger contracts.MatchOverrunLogger) (contracts.MatchCoreLoop, contracts.MatchCoreStatus) {
+	core, status := newMatchCore(config, shards, ring, store, keyer, codec, clock, metrics, logger)
+	if status != contracts.MatchCoreStatusOK {
+		return nil, status
+	}
+	if scorer != nil {
+		core.scorer = scorer
+	}
+	return core, contracts.MatchCoreStatusOK
+}
+
 func validateConfig(config contracts.MatchCoreConfig) contracts.MatchCoreStatus {
 	if config.TickIntervalNanos != contracts.MatchTickIntervalNanos {
 		return contracts.MatchCoreStatusInvalidConfig

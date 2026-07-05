@@ -49,7 +49,7 @@ that shows which hot paths stay allocation-free.
 | Deck intelligence | Archetype vectors for beatdown, control, cycle, swarm, spell pressure, air pressure, building pressure, and champion pressure style matching |
 | EOMM routing | Mainstream, loser, retention, and monetization paths with starvation evacuation, churn spike detection, and retention-oriented scoring |
 | Simulation | Player sessions, match outcomes, tilt, churn, trophy movement, deck mutation, session exits, and convergence gates |
-| Telemetry | Fixed-size async event ring, 10Hz WebSocket frames, embedded React/Tailwind visualizer, queue depth, matches/tick, heap, churn alerts |
+| Telemetry | Fixed-size async event ring, 10Hz WebSocket frames, embedded React/Tailwind visualizer, queue depth, matches/tick, heap, churn alerts, frontend simulation controls |
 
 ## Benchmarks And Telemetry
 
@@ -101,6 +101,23 @@ Open the telemetry deck:
 http://localhost:8080/
 ```
 
+The deck includes live telemetry charts, queue injection controls, and a
+frontend simulation launcher. The simulation launcher calls:
+
+```text
+POST http://localhost:8080/simulate
+```
+
+with a JSON body like:
+
+```json
+{
+  "players": 10000,
+  "rounds": 3,
+  "seed": 42
+}
+```
+
 Queue intake is exposed at `ws://localhost:8080/queue`. Send frames shaped like:
 
 ```json
@@ -116,6 +133,36 @@ Queue intake is exposed at `ws://localhost:8080/queue`. Send frames shaped like:
 }
 ```
 
+## How The Live Service Communicates
+
+The frontend talks to the Go service over three local endpoints:
+
+| Endpoint | Direction | Purpose |
+| --- | --- | --- |
+| `GET /` | Browser -> service | Serves the embedded React telemetry deck |
+| `WS /telemetry` | Service -> browser | Streams 10Hz telemetry frames: queue depth, core loop ticks, Redis latency, EOMM fit, heap, and match counters |
+| `WS /queue` | Browser -> service | Sends JSON queue tickets into the ring buffer |
+| `POST /simulate` | Browser -> service | Runs deterministic macro simulation and returns season-level results |
+
+The live matchmaking path is:
+
+```text
+browser /queue
+  -> Go WebSocket intake
+  -> sharded ring buffer
+  -> 200ms matchcore tick
+  -> Redis sorted-set candidate queues
+  -> EOMM scorer
+  -> Redis Lua assignment
+  -> telemetry sink
+  -> browser /telemetry
+```
+
+The service logs structured lifecycle and traffic events with `slog`: startup,
+Redis connection, Lua script loading, ring/matchcore/EOMM readiness, queue
+WebSocket open/close accepted/rejected counts, simulation requests, simulation
+completion, and shutdown.
+
 ## Key Commands
 
 | Command | Purpose |
@@ -125,6 +172,7 @@ Queue intake is exposed at `ws://localhost:8080/queue`. Send frames shaped like:
 | `docker compose up -d redis` | Start Redis 7 on local port `6380` |
 | `go run ./cmd/matchpoint -addr :8080 -redis localhost:6380` | Run the matchmaking service and embedded telemetry UI |
 | `go run ./cmd/matchpoint-sim -players 100000 -rounds 16` | Run the macro simulation with 100k simulated players |
+| `curl -X POST http://localhost:8080/simulate -H 'Content-Type: application/json' -d '{"players":10000,"rounds":3,"seed":42}'` | Run the same deterministic simulation through the service API |
 | `go test ./...` | Run the default fake-backed test suite |
 | `MP_REDIS_INTEGRATION=1 go test ./internal/redisqueue` | Run live Redis integration tests |
 | `go test ./internal/eomm -bench=. -benchmem -run='^$'` | Benchmark the EOMM scoring path |

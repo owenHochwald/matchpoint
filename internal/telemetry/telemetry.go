@@ -153,14 +153,40 @@ type Frame struct {
 	EOMMAccuracy      float32   `json:"eommAccuracy"`
 	AllocBytesHeap    uint64    `json:"allocBytesHeap"`
 	ChurnAlerts       uint32    `json:"churnAlerts"`
+	CoreTicks         uint64    `json:"coreTicks"`
+	DrainedTickets    uint32    `json:"drainedTickets"`
+	CandidateQueries  uint32    `json:"candidateQueries"`
+	EmptyQueries      uint32    `json:"emptyQueries"`
+	TotalDrained      uint64    `json:"totalDrained"`
+	TotalCandidates   uint64    `json:"totalCandidates"`
+	TotalMatches      uint64    `json:"totalMatches"`
+	TotalEmptyQueries uint64    `json:"totalEmptyQueries"`
+	TickDurationNanos int64     `json:"tickDurationNanos"`
+	RedisLatencyNanos int64     `json:"redisLatencyNanos"`
+	RedisStatus       uint32    `json:"redisStatus"`
+	Overruns          uint64    `json:"overruns"`
+	SkippedTicks      uint64    `json:"skippedTicks"`
+	SimDrops          uint64    `json:"simDrops"`
 }
 
 type Sink struct {
 	ring              *Ring
+	coreTicks         atomic.Uint64
 	matchesLastTick   atomic.Uint32
+	drainedTickets    atomic.Uint32
+	candidateQueries  atomic.Uint32
+	emptyQueries      atomic.Uint32
+	totalDrained      atomic.Uint64
+	totalCandidates   atomic.Uint64
+	totalMatches      atomic.Uint64
+	totalEmptyQueries atomic.Uint64
+	tickDurationNanos atomic.Int64
 	churnAlerts       atomic.Uint32
 	simDrops          atomic.Uint64
 	redisLatencyNanos atomic.Int64
+	redisStatus       atomic.Uint32
+	overruns          atomic.Uint64
+	skippedTicks      atomic.Uint64
 	queueDepths       [5]atomic.Uint32
 }
 
@@ -175,7 +201,16 @@ func (s *Sink) RecordTick(metrics contracts.MatchTickMetrics) {
 	if s == nil {
 		return
 	}
+	s.coreTicks.Add(1)
 	s.matchesLastTick.Store(metrics.MatchesMade)
+	s.drainedTickets.Store(metrics.DrainedTickets)
+	s.candidateQueries.Store(metrics.CandidateQueries)
+	s.emptyQueries.Store(metrics.EmptyQueries)
+	s.totalDrained.Add(uint64(metrics.DrainedTickets))
+	s.totalCandidates.Add(uint64(metrics.CandidateQueries))
+	s.totalMatches.Add(uint64(metrics.MatchesMade))
+	s.totalEmptyQueries.Add(uint64(metrics.EmptyQueries))
+	s.tickDurationNanos.Store(metrics.DurationNanos)
 	s.write(Event{
 		TimestampUnixNano: int64(metrics.TickID),
 		Type:              EventMatchMade,
@@ -189,6 +224,7 @@ func (s *Sink) RecordOverrun(tickID uint64, durationNanos int64, consecutive uin
 	if s == nil {
 		return
 	}
+	s.overruns.Add(1)
 	s.write(Event{
 		TimestampUnixNano: int64(tickID),
 		Type:              EventTickDuration,
@@ -202,6 +238,7 @@ func (s *Sink) RecordSkippedTick(tickID uint64) {
 	if s == nil {
 		return
 	}
+	s.skippedTicks.Add(1)
 	s.write(Event{TimestampUnixNano: int64(tickID), Type: EventTickDuration, Segment: SystemSegment, Value2: 1})
 }
 
@@ -228,6 +265,7 @@ func (s *Sink) RecordRedisStatus(status contracts.RedisQueueStatus, elapsedNanos
 		return
 	}
 	s.redisLatencyNanos.Store(elapsedNanos)
+	s.redisStatus.Store(uint32(status))
 	s.write(Event{
 		Type:    EventRedisLatency,
 		Segment: SystemSegment,
@@ -283,6 +321,20 @@ func (s *Sink) SnapshotFrame(timestampUnixNano int64, eommAccuracy float32, allo
 		EOMMAccuracy:      eommAccuracy,
 		AllocBytesHeap:    allocBytesHeap,
 		ChurnAlerts:       s.churnAlerts.Load(),
+		CoreTicks:         s.coreTicks.Load(),
+		DrainedTickets:    s.drainedTickets.Load(),
+		CandidateQueries:  s.candidateQueries.Load(),
+		EmptyQueries:      s.emptyQueries.Load(),
+		TotalDrained:      s.totalDrained.Load(),
+		TotalCandidates:   s.totalCandidates.Load(),
+		TotalMatches:      s.totalMatches.Load(),
+		TotalEmptyQueries: s.totalEmptyQueries.Load(),
+		TickDurationNanos: s.tickDurationNanos.Load(),
+		RedisLatencyNanos: s.redisLatencyNanos.Load(),
+		RedisStatus:       s.redisStatus.Load(),
+		Overruns:          s.overruns.Load(),
+		SkippedTicks:      s.skippedTicks.Load(),
+		SimDrops:          s.simDrops.Load(),
 	}
 	for i := range out.QueueDepths {
 		out.QueueDepths[i] = s.queueDepths[i].Load()
@@ -415,7 +467,25 @@ func (s *Server) accuracy() float32 {
 	if s.EOMMAccuracy != nil {
 		return s.EOMMAccuracy()
 	}
+	if s.Sink != nil {
+		return s.Sink.EstimatedEOMMQuality()
+	}
 	return 0
+}
+
+func (s *Sink) EstimatedEOMMQuality() float32 {
+	if s == nil {
+		return 0
+	}
+	queries := s.totalCandidates.Load()
+	if queries == 0 {
+		return 0
+	}
+	score := float32(s.totalMatches.Load()) / float32(queries)
+	if score > 1 {
+		return 1
+	}
+	return score
 }
 
 func (s *Server) allocBytes() uint64 {

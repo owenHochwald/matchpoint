@@ -93,6 +93,11 @@ func newEngine(config contracts.EOMMConfig) (*engine, contracts.EOMMStatus) {
 	return &engine{config: config}, contracts.EOMMStatusOK
 }
 
+// NewEngine creates an engagement scorer/router with production defaults applied.
+func NewEngine(config contracts.EOMMConfig) (contracts.EOMMFitnessScorer, contracts.EOMMStatus) {
+	return newEngine(config)
+}
+
 func fillDefaults(config contracts.EOMMConfig) contracts.EOMMConfig {
 	if config.TrophyWeight == 0 && config.VectorWeight == 0 && config.RetentionWeight == 0 {
 		config.TrophyWeight = contracts.EOMMDefaultTrophyWeight
