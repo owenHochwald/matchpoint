@@ -259,6 +259,32 @@ select {
   background: rgba(10, 20, 65, 0.62);
 }
 
+.mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  padding: 0.35rem;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-radius: 1rem;
+  background: rgba(8, 17, 57, 0.42);
+}
+
+.mode-toggle button {
+  min-height: 2.75rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-weight: 1000;
+  border: 0;
+  border-radius: 0.75rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mode-toggle button.active {
+  color: #3d250c;
+  background: linear-gradient(180deg, #ffe180, #f3a53a);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.38), 0 4px 0 rgba(86, 54, 18, 0.32);
+}
+
 .primary-button,
 .secondary-button {
   display: inline-flex;
@@ -429,6 +455,65 @@ select {
   width: 100%;
   height: 0.35rem;
   margin-left: 0.2rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.95), rgba(255, 214, 92, 0.95), rgba(74, 215, 255, 0.95));
+  background-size: 200% 100%;
+  animation: flow-line 1.8s linear infinite;
+}
+
+.arch-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.arch-node {
+  min-width: 0;
+  min-height: 9rem;
+  padding: 0.85rem;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-radius: 1rem;
+  background: rgba(8, 17, 57, 0.42);
+}
+
+.arch-dot {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.35);
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+.arch-node h3 {
+  margin: 0.55rem 0 0;
+  color: white;
+  font-size: 1rem;
+  font-weight: 1000;
+  line-height: 1.05;
+}
+
+.arch-node strong {
+  display: block;
+  margin-top: 0.45rem;
+  color: white;
+  font-size: 1.45rem;
+  font-weight: 1000;
+  line-height: 1;
+}
+
+.arch-node p {
+  margin: 0.35rem 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.8rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.arch-link {
+  width: 2.4rem;
+  height: 0.45rem;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.95), rgba(255, 214, 92, 0.95), rgba(74, 215, 255, 0.95));
   background-size: 200% 100%;
@@ -666,5 +751,15 @@ select {
 
   .demo-flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .arch-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .arch-link {
+    width: 0.45rem;
+    height: 1.7rem;
+    margin: 0 auto;
   }
 }

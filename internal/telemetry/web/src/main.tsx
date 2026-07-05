@@ -2,14 +2,12 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
-  BarChart3,
   Bolt,
   Crown,
   Gauge,
   Gem,
   Play,
   Shield,
-  Sparkles,
   Swords,
   Trophy,
   Wifi,
@@ -39,21 +37,6 @@ type Frame = {
   overruns: number;
   skippedTicks: number;
   simDrops: number;
-};
-
-type SimResult = {
-  players: number;
-  rounds: number;
-  seed: number;
-  elapsedMillis: number;
-  queued: number;
-  completed: number;
-  mutated: number;
-  quit: number;
-  convergenceStatus: number;
-  converged: boolean;
-  failedGate: number;
-  segmentDepths: number[];
 };
 
 type QueueAck = {
@@ -144,13 +127,6 @@ function formatNumber(value: number) {
 
 function percent(value: number) {
   return `${Math.round(value * 100)}%`;
-}
-
-function ratio(part: number, total: number) {
-  if (total <= 0) {
-    return "0%";
-  }
-  return percent(part / total);
 }
 
 function millisFromNanos(value: number) {
@@ -337,61 +313,72 @@ function CoreLoopPanel({ frame }: { frame: Frame }) {
   );
 }
 
-function SimulationPanel({ onResult }: { onResult: (result: SimResult) => void }) {
-  const [players, setPlayers] = React.useState(50_000);
-  const [rounds, setRounds] = React.useState(8);
-  const [seed, setSeed] = React.useState(42);
-  const [running, setRunning] = React.useState(false);
-  const [error, setError] = React.useState("");
-
-  async function run() {
-    setRunning(true);
-    setError("");
-    try {
-      const response = await fetch("/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ players, rounds, seed }),
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      onResult((await response.json()) as SimResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "simulation failed");
-    } finally {
-      setRunning(false);
-    }
-  }
+function HealthVerdict({ frame }: { frame: Frame }) {
+  const tickMs = millisFromNanos(frame.tickDurationNanos);
+  const redisMs = millisFromNanos(frame.redisLatencyNanos);
+  const budgetUsed = Math.min(100, (tickMs / 200) * 100);
+  const matchYield = frame.totalCandidates > 0 ? frame.totalMatches / frame.totalCandidates : 0;
+  const verdict =
+    frame.overruns > 0 || frame.skippedTicks > 0 ? "Needs attention" : tickMs < 10 && redisMs < 5 ? "Excellent" : "Healthy";
+  const tone = verdict === "Excellent" ? "bg-emerald-500" : verdict === "Healthy" ? "bg-sky-500" : "bg-amber-500";
 
   return (
-    <section className="control-panel">
+    <section className="arena-panel">
       <div className="panel-heading">
         <div>
-          <span className="kicker">Simulator</span>
-          <h2>Royal Lab</h2>
+          <span className="kicker">Service Health</span>
+          <h2>{verdict}</h2>
         </div>
-        <Sparkles className="h-7 w-7 text-sky-200" />
+        <Gauge className="h-7 w-7 text-emerald-200" />
       </div>
-      <div className="mt-5 space-y-4">
-        <Slider label="Players in season" value={players} min={1_000} max={250_000} step={1_000} onChange={setPlayers} />
-        <Slider label="Matches per player" value={rounds} min={1} max={64} onChange={setRounds} />
-        <label className="control-row">
-          <span>Seed</span>
-          <input
-            className="number-input"
-            type="number"
-            min={1}
-            value={seed}
-            onChange={(event) => setSeed(Math.max(1, Number(event.target.value)))}
-          />
-        </label>
+      <div className="mt-5 grid gap-3 sm:grid-cols-4">
+        <MiniMetric label="Tick budget used" value={`${budgetUsed.toFixed(3)}%`} />
+        <MiniMetric label="Match yield" value={percent(matchYield)} />
+        <MiniMetric label="Redis latency" value={`${redisMs.toFixed(2)} ms`} />
+        <MiniMetric label="Skipped ticks" value={formatNumber(frame.skippedTicks)} />
       </div>
-      <button className="primary-button mt-5" type="button" onClick={run} disabled={running}>
-        <Play className="h-5 w-5" />
-        {running ? "Running" : "Run Simulation"}
-      </button>
-      {error ? <p className="mt-3 rounded-xl bg-rose-500/25 px-4 py-2 text-sm font-bold text-white">{error}</p> : null}
+      <div className="mt-4 rounded-xl bg-white/10 p-3 text-sm font-bold leading-snug text-white/75">
+        <span className={`status-pill ${tone} mr-2`}>{verdict}</span>
+        This single node is healthy when tick time stays far below 200ms, Redis latency stays low, and overruns/skips stay at zero.
+      </div>
+    </section>
+  );
+}
+
+function ArchitecturePanel({ frame }: { frame: Frame }) {
+  const nodes = [
+    { name: "Player joins", value: frame.totalDrained, detail: "accepted into intake", tone: "bg-amber-300" },
+    { name: "Ring buffer", value: frame.drainedTickets, detail: "drained this tick", tone: "bg-emerald-400" },
+    { name: "MatchCore", value: frame.coreTicks, detail: "200ms loop pulses", tone: "bg-sky-400" },
+    { name: "Redis search", value: frame.totalCandidates, detail: "candidate checks", tone: "bg-cyan-300" },
+    { name: "EOMM score", value: frame.eommAccuracy * 100, detail: "match yield", tone: "bg-purple-300", suffix: "%" },
+    { name: "Match assigned", value: frame.totalMatches, detail: "Lua commits", tone: "bg-pink-400" },
+  ];
+  return (
+    <section className="arena-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="kicker">Architecture</span>
+          <h2>Live Player Path</h2>
+        </div>
+        <Bolt className="h-7 w-7 text-amber-200" />
+      </div>
+      <div className="arch-flow mt-5">
+        {nodes.map((node, index) => (
+          <React.Fragment key={node.name}>
+            <article className="arch-node">
+              <span className={`arch-dot ${node.tone}`} />
+              <h3>{node.name}</h3>
+              <strong>
+                {formatNumber(node.value)}
+                {node.suffix ?? ""}
+              </strong>
+              <p>{node.detail}</p>
+            </article>
+            {index < nodes.length - 1 ? <div className="arch-link" /> : null}
+          </React.Fragment>
+        ))}
+      </div>
     </section>
   );
 }
@@ -470,19 +457,40 @@ function QueueLauncher({ onAck }: { onAck: (ack: QueueAck) => void }) {
 
 function LiveDemoPanel({ frame, onAck }: { frame: Frame; onAck: (ack: QueueAck) => void }) {
   const [running, setRunning] = React.useState(false);
-  const [waves, setWaves] = React.useState(6);
-  const [waveSize, setWaveSize] = React.useState(12);
+  const [mode, setMode] = React.useState<"burst" | "refill">("burst");
+  const [players, setPlayers] = React.useState(500);
+  const [joinRate, setJoinRate] = React.useState(100);
+  const [trophySpread, setTrophySpread] = React.useState(80);
   const [sent, setSent] = React.useState(0);
   const [acked, setAcked] = React.useState(0);
   const [error, setError] = React.useState("");
   const startTotals = React.useRef({ drained: 0, searches: 0, matches: 0 });
+  const stopRef = React.useRef(false);
+  const nextPlayerRef = React.useRef(0);
+  const lastMatchRef = React.useRef(0);
 
   React.useEffect(() => {
-    return () => setRunning(false);
+    return () => {
+      stopRef.current = true;
+      setRunning(false);
+    };
   }, []);
 
-  function runLiveDemo() {
+  React.useEffect(() => {
+    if (!running || mode !== "refill") {
+      lastMatchRef.current = frame.totalMatches;
+      return;
+    }
+    const newMatches = frame.totalMatches - lastMatchRef.current;
+    if (newMatches > 0) {
+      lastMatchRef.current = frame.totalMatches;
+      void sendPlayers(newMatches * 2, Math.max(8, joinRate));
+    }
+  }, [frame.totalMatches, joinRate, mode, running]);
+
+  async function runLiveDemo() {
     setRunning(true);
+    stopRef.current = false;
     setError("");
     setSent(0);
     setAcked(0);
@@ -491,56 +499,86 @@ function LiveDemoPanel({ frame, onAck }: { frame: Frame; onAck: (ack: QueueAck) 
       searches: frame.totalCandidates,
       matches: frame.totalMatches,
     };
+    lastMatchRef.current = frame.totalMatches;
+    nextPlayerRef.current = Date.now() * 1000;
 
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}/queue`);
-    let wave = 0;
-    let ticketIndex = 0;
-    let closeTimer = 0;
+    try {
+      await sendPlayers(players, joinRate);
+      if (mode === "burst") {
+        setRunning(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "queue stream failed");
+      setRunning(false);
+    }
+  }
 
-    socket.onopen = () => {
-      const sendWave = () => {
-        if (wave >= waves) {
-          window.clearInterval(interval);
-          closeTimer = window.setTimeout(() => socket.close(), 700);
-          return;
-        }
-        const baseTrophies = 3200 + (wave % 4) * 6;
-        for (let i = 0; i < waveSize; i++) {
-          const id = Date.now() * 1000 + ticketIndex;
-          socket.send(
-            JSON.stringify({
-              playerId: id,
-              trophies: baseTrophies + (i % 3),
-              deckVector: deckVector(ticketIndex),
-              churnRisk: 0.18 + (wave % 3) * 0.04,
-              monetizationP: 0.2 + (i % 4) * 0.03,
-              poolTag: 0,
-              consecLosses: i % 5 === 0 ? 2 : 0,
-              consecWins: i % 4,
-            }),
-          );
-          ticketIndex++;
-        }
-        setSent((value) => value + waveSize);
-        wave++;
+  function stopLiveDemo() {
+    stopRef.current = true;
+    setRunning(false);
+  }
+
+  function sendPlayers(count: number, ratePerSecond: number) {
+    return new Promise<void>((resolve, reject) => {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const socket = new WebSocket(`${protocol}://${window.location.host}/queue`);
+      const perFlush = Math.max(1, Math.ceil(ratePerSecond / 4));
+      let remaining = count;
+      let closeTimer = 0;
+      let interval = 0;
+
+      socket.onopen = () => {
+        const flush = () => {
+          if (stopRef.current || remaining <= 0) {
+            window.clearInterval(interval);
+            closeTimer = window.setTimeout(() => socket.close(), 350);
+            return;
+          }
+          const batchSize = Math.min(perFlush, remaining);
+          for (let i = 0; i < batchSize; i++) {
+            const index = nextPlayerRef.current++;
+            const trophies = 3200 + ((index % Math.max(1, trophySpread)) - Math.floor(trophySpread / 2));
+            const playerId = index;
+            socket.send(
+              JSON.stringify({
+                playerId,
+                trophies,
+                deckVector: deckVector(index),
+                churnRisk: 0.12 + (index % 6) * 0.04,
+                monetizationP: 0.1 + (index % 5) * 0.05,
+                poolTag: 0,
+                consecLosses: index % 7 === 0 ? 2 : 0,
+                consecWins: index % 4,
+              }),
+            );
+          }
+          remaining -= batchSize;
+          setSent((value) => value + batchSize);
+        };
+        flush();
+        interval = window.setInterval(flush, 250);
       };
-      sendWave();
-      const interval = window.setInterval(sendWave, 650);
-    };
-    socket.onmessage = (event) => {
-      setAcked((value) => value + 1);
-      onAck(JSON.parse(event.data) as QueueAck);
-    };
-    socket.onerror = () => {
-      setError("live demo websocket failed");
-      setRunning(false);
-      window.clearTimeout(closeTimer);
-    };
-    socket.onclose = () => {
-      setRunning(false);
-      window.clearTimeout(closeTimer);
-    };
+      socket.onmessage = (event) => {
+        setAcked((value) => value + 1);
+        onAck(JSON.parse(event.data) as QueueAck);
+      };
+      socket.onerror = () => {
+        window.clearInterval(interval);
+        window.clearTimeout(closeTimer);
+        reject(new Error("queue websocket failed"));
+      };
+      socket.onclose = () => {
+        window.clearInterval(interval);
+        window.clearTimeout(closeTimer);
+        resolve();
+      };
+    });
+  }
+
+  function runSmallDemo() {
+    setPlayers(72);
+    setJoinRate(120);
+    setMode("burst");
   }
 
   const drainedDelta = Math.max(0, frame.totalDrained - startTotals.current.drained);
@@ -551,27 +589,46 @@ function LiveDemoPanel({ frame, onAck }: { frame: Frame; onAck: (ack: QueueAck) 
     <section className="control-panel">
       <div className="panel-heading">
         <div>
-          <span className="kicker">Live Simulation</span>
-          <h2>Match Parade</h2>
+          <span className="kicker">Live Matchmaking</span>
+          <h2>Player Flow Simulator</h2>
         </div>
         <Swords className="h-7 w-7 text-pink-200" />
       </div>
-      <div className="mt-5 space-y-4">
-        <Slider label="Waves" value={waves} min={2} max={16} onChange={setWaves} />
-        <Slider label="Tickets per wave" value={waveSize} min={4} max={40} step={2} onChange={setWaveSize} />
+      <div className="mode-toggle mt-5">
+        <button className={mode === "burst" ? "active" : ""} type="button" onClick={() => setMode("burst")}>
+          Burst load
+        </button>
+        <button className={mode === "refill" ? "active" : ""} type="button" onClick={() => setMode("refill")}>
+          Live refill
+        </button>
       </div>
-      <button className="primary-button mt-5" type="button" onClick={runLiveDemo} disabled={running}>
-        <Play className="h-5 w-5" />
-        {running ? "Streaming Tickets" : "Run Live Demo"}
-      </button>
+      <div className="mt-5 space-y-4">
+        <Slider label={mode === "burst" ? "Players to join" : "Initial players online"} value={players} min={20} max={50_000} step={20} onChange={setPlayers} />
+        <Slider label="Join rate / sec" value={joinRate} min={20} max={2_000} step={20} onChange={setJoinRate} />
+        <Slider label="Trophy spread" value={trophySpread} min={10} max={1_000} step={10} onChange={setTrophySpread} />
+      </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <MiniMetric label="Sent / acked" value={`${formatNumber(sent)} / ${formatNumber(acked)}`} />
+        <button className="primary-button" type="button" onClick={runLiveDemo} disabled={running}>
+          <Play className="h-5 w-5" />
+          {running ? "Running" : mode === "burst" ? "Run Burst" : "Start Refill"}
+        </button>
+        <button className="secondary-button" type="button" onClick={running ? stopLiveDemo : runSmallDemo}>
+          <Bolt className="h-5 w-5" />
+          {running ? "Stop" : "Use 72-player demo"}
+        </button>
+      </div>
+      <p className="mt-4 rounded-xl bg-white/10 p-3 text-sm font-bold leading-snug text-white/75">
+        Burst load sends a fixed number of players into the real queue. Live refill starts with an online population, then adds two new
+        players whenever a match is assigned.
+      </p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <MiniMetric label="Players sent / accepted" value={`${formatNumber(sent)} / ${formatNumber(acked)}`} />
         <MiniMetric label="Drained now" value={formatNumber(drainedDelta)} />
         <MiniMetric label="Searches now" value={formatNumber(searchDelta)} />
         <MiniMetric label="Matches now" value={formatNumber(matchDelta)} />
       </div>
       <div className="demo-flow mt-5">
-        <DemoStage label="Joining" value={sent} tone="bg-amber-300" />
+        <DemoStage label="Player joins" value={sent} tone="bg-amber-300" />
         <DemoStage label="Accepted" value={acked} tone="bg-emerald-400" />
         <DemoStage label="Drained" value={drainedDelta} tone="bg-sky-400" />
         <DemoStage label="Matched" value={matchDelta} tone="bg-pink-400" />
@@ -623,7 +680,7 @@ function PoolGuide() {
         ))}
       </div>
       <div className="mt-4 rounded-xl bg-white/10 p-3 text-sm font-bold leading-snug text-white/75">
-        Pools matter because they keep different player states measurable. If every ticket goes through one generic queue, retention, tilt,
+        Pools matter because they keep different player states measurable. If every player join goes through one generic queue, retention, tilt,
         and monetization behavior blur together and the telemetry stops explaining why matches feel good or bad.
       </div>
     </section>
@@ -632,8 +689,8 @@ function PoolGuide() {
 
 function FlowGuide() {
   const steps = [
-    ["Frontend", "Sends queue tickets over /queue and receives telemetry over /telemetry."],
-    ["Ring Buffer", "Accepts tickets fast, then matchcore drains them on the 200ms tick."],
+    ["Frontend", "Sends player joins over /queue and receives telemetry over /telemetry."],
+    ["Ring Buffer", "Accepts player joins fast, then matchcore drains them on the 200ms tick."],
     ["Redis Queues", "Stores candidates by trophy segment or special pool so the core can search bounded ranges."],
     ["EOMM Scorer", "Scores candidates using trophy gap, deck vector distance, retention, and monetization terms."],
     ["Telemetry", "Publishes loop counters, queue depth, memory, Redis latency, and EOMM fit back to this deck."],
@@ -666,7 +723,7 @@ function MetricGuide() {
   const items = [
     ["Core ticks", "How many 200ms loop pulses have run since the service started."],
     ["Drain ring", "Tickets moved from the fast in-memory intake buffer into Redis ownership this tick."],
-    ["Search Redis", "Candidate range searches issued for drained tickets."],
+    ["Search Redis", "Candidate range searches issued for drained player joins."],
     ["Assign match", "Successful Redis Lua assignments during the latest tick."],
     ["Empty searches", "Searches that found no legal candidate. High values mean queue shape or tolerance is not lining up."],
     ["EOMM fit", "Total matches divided by total candidate searches. It rises when searches produce assignments."],
@@ -700,51 +757,6 @@ function deckVector(index: number) {
   return vector;
 }
 
-function SimulationResults({ result }: { result: SimResult | null }) {
-  const depths = result?.segmentDepths ?? [0, 0, 0, 0, 0, 0];
-  const max = Math.max(1, ...depths);
-  const completed = result ? `${ratio(result.completed, result.queued)} played` : "Waiting";
-  const avgMatches = result && result.players > 0 ? (result.completed / result.players).toFixed(1) : "0.0";
-
-  return (
-    <section className="arena-panel">
-      <div className="panel-heading">
-        <div>
-          <span className="kicker">Results</span>
-          <h2>Season Forecast</h2>
-        </div>
-        <BarChart3 className="h-7 w-7 text-pink-200" />
-      </div>
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        <MiniMetric label="Matches played" value={completed} />
-        <MiniMetric label="Avg per player" value={avgMatches} />
-        <MiniMetric label="Players left" value={result ? ratio(result.quit, result.players) : "0%"} />
-      </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <MiniMetric label="Deck changes" value={result ? ratio(result.mutated, result.completed) : "0%"} />
-        <MiniMetric label="Tickets created" value={result ? formatNumber(result.queued) : "0"} />
-        <MiniMetric label="Run time" value={result ? `${result.elapsedMillis} ms` : "0 ms"} />
-      </div>
-      <div className="mt-5 grid grid-cols-6 items-end gap-2">
-        {depths.map((depth, index) => (
-          <div key={index} className="flex min-h-48 flex-col items-center justify-end gap-2">
-            <div className="segment-column" style={{ height: `${Math.max(8, (depth / max) * 100)}%` }}>
-              <span>{formatNumber(depth)}</span>
-            </div>
-            <strong className="text-xs text-white/75">{index + 1}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className={`status-pill ${result?.converged ? "bg-emerald-500" : "bg-amber-500"}`}>
-          {result ? (result.converged ? "Converged" : "Gate Check") : "Awaiting run"}
-        </span>
-        {result ? <span className="status-pill bg-sky-500">{result.elapsedMillis} ms</span> : null}
-      </div>
-    </section>
-  );
-}
-
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="mini-metric">
@@ -756,9 +768,7 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
 
 function App() {
   const { frame, connected, history } = useTelemetry();
-  const [simResult, setSimResult] = React.useState<SimResult | null>(null);
   const [lastAck, setLastAck] = React.useState<QueueAck | null>(null);
-  const heapMB = frame.allocBytesHeap / 1024 / 1024;
   const totalDepth = frame.queueDepths.reduce((sum, value) => sum + value, 0);
   const tickMs = millisFromNanos(frame.tickDurationNanos);
   const updated = frame.ts > 0 ? new Date(frame.ts / 1_000_000).toLocaleTimeString() : "waiting";
@@ -787,12 +797,14 @@ function App() {
         <section className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatTile label="Core Ticks" value={formatNumber(frame.coreTicks)} detail={`${tickMs.toFixed(2)} ms latest tick`} tone="gold" icon={<Activity className="h-6 w-6" />} />
           <StatTile label="Matches / Tick" value={formatNumber(frame.matchesLastTick)} detail={`${formatNumber(frame.totalMatches)} total assigned`} tone="pink" icon={<Swords className="h-6 w-6" />} />
-          <StatTile label="Queue Depth" value={formatNumber(totalDepth)} detail="tickets across lanes" tone="emerald" icon={<Trophy className="h-6 w-6" />} />
+          <StatTile label="Queue Depth" value={formatNumber(totalDepth)} detail="players across lanes" tone="emerald" icon={<Trophy className="h-6 w-6" />} />
           <StatTile label="EOMM Fit" value={percent(frame.eommAccuracy)} detail={`${formatNumber(frame.totalCandidates)} scored searches`} tone="sky" icon={<Gem className="h-6 w-6" />} />
         </section>
 
         <section className="mt-4 grid flex-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="grid gap-4">
+            <HealthVerdict frame={frame} />
+            <ArchitecturePanel frame={frame} />
             <CoreLoopPanel frame={frame} />
             <QueueArena depths={frame.queueDepths} />
             <div className="grid gap-4 lg:grid-cols-2">
@@ -800,11 +812,9 @@ function App() {
               <Sparkline label="tick ms" values={history.map((item) => millisFromNanos(item.tickDurationNanos))} color="#ff77b0" />
             </div>
             <Sparkline label="heap mb" values={history.map((item) => item.allocBytesHeap / 1024 / 1024)} color="#4ad7ff" />
-            <SimulationResults result={simResult} />
             <FlowGuide />
           </div>
           <aside className="grid content-start gap-4">
-            <SimulationPanel onResult={setSimResult} />
             <LiveDemoPanel frame={frame} onAck={setLastAck} />
             <QueueLauncher onAck={setLastAck} />
             <PoolGuide />
