@@ -217,6 +217,31 @@ func newGoRedisAdapter(client redis.UniversalClient) goRedisAdapter {
 	return goRedisAdapter{client: client}
 }
 
+// NewKeyer creates the Redis pool/key mapper.
+func NewKeyer() contracts.RedisQueueKeyer {
+	return newKeyer()
+}
+
+// NewScoreCodec creates the Redis score and member codec.
+func NewScoreCodec() contracts.RedisScoreCodec {
+	return newScoreCodec()
+}
+
+// NewMetrics creates Redis queue metrics counters.
+func NewMetrics() contracts.RedisQueueMetrics {
+	return newMetrics()
+}
+
+// NewUniversalStore creates a Redis-backed queue store and script cache.
+func NewUniversalStore(client redis.UniversalClient, config contracts.RedisQueueConfig, metrics contracts.RedisQueueMetrics) (contracts.RedisQueueStore, contracts.RedisScriptCache) {
+	adapter := newGoRedisAdapter(client)
+	if metrics == nil {
+		metrics = newMetrics()
+	}
+	cache := newScriptCache(adapter, metrics)
+	return newStore(adapter, cache, metrics, config), cache
+}
+
 func (keyer) SegmentForTrophies(trophies int32) contracts.RedisQueuePool {
 	switch {
 	case trophies < 0:

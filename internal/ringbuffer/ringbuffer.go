@@ -102,6 +102,11 @@ func newRingBuffer(config contracts.RingConfig) (*ringBuffer, error) {
 	return buffer, nil
 }
 
+// NewRingBuffer creates an ingestion handoff ring buffer.
+func NewRingBuffer(config contracts.RingConfig) (contracts.TicketRingBuffer, error) {
+	return newRingBuffer(config)
+}
+
 func isPowerOfTwo(value uint32) bool {
 	return value != 0 && value&(value-1) == 0
 }

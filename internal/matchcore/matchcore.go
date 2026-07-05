@@ -251,6 +251,11 @@ func newMatchCore(config contracts.MatchCoreConfig, shards uint16, ring contract
 	return core, contracts.MatchCoreStatusOK
 }
 
+// NewMatchCore creates the production tick loop from contracted dependencies.
+func NewMatchCore(config contracts.MatchCoreConfig, shards uint16, ring contracts.TicketRingBuffer, store contracts.RedisQueueStore, keyer contracts.RedisQueueKeyer, codec contracts.RedisScoreCodec, clock contracts.MatchClock, metrics contracts.MatchMetricsSink, logger contracts.MatchOverrunLogger) (contracts.MatchCoreLoop, contracts.MatchCoreStatus) {
+	return newMatchCore(config, shards, ring, store, keyer, codec, clock, metrics, logger)
+}
+
 func validateConfig(config contracts.MatchCoreConfig) contracts.MatchCoreStatus {
 	if config.TickIntervalNanos != contracts.MatchTickIntervalNanos {
 		return contracts.MatchCoreStatusInvalidConfig
